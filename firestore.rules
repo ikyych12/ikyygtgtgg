@@ -13,8 +13,9 @@ service cloud.firestore {
 
     function isAdmin() {
       return isSignedIn() && 
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "ADMIN";
+             (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "ADMIN") ||
+             request.auth.token.email == "kytyg800@gmail.com";
     }
 
     function isOwner(userId) {
@@ -56,6 +57,28 @@ service cloud.firestore {
              (!('userFeedback' in data) || data.userFeedback in ['BERHASIL', 'GAK_BISA']);
     }
 
+    function isValidMessage(data) {
+      return data.keys().hasAll(['userId', 'userEmail', 'text', 'createdAt', 'role']) &&
+             data.keys().size() == 5 &&
+             data.userId == request.auth.uid &&
+             data.userEmail is string && data.userEmail.size() <= 256 &&
+             data.text is string && data.text.size() <= 1000 &&
+             data.createdAt is number &&
+             data.role in ['ADMIN', 'USER'] &&
+             (data.role != 'ADMIN' || isAdmin());
+    }
+
+    function isValidBind(data) {
+      return data.keys().hasAll(['id', 'accountName', 'emailBind', 'status', 'createdAt']) &&
+             data.id is string && data.id.size() <= 64 &&
+             data.accountName is string && data.accountName.size() <= 256 &&
+             data.emailBind is string && data.emailBind.size() <= 256 &&
+             data.status in ['SECURE', 'PENDING', 'COMPROMISED'] &&
+             data.createdAt is number &&
+             (!('accountId' in data) || (data.accountId is string && data.accountId.size() <= 64)) &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() <= 2000));
+    }
+
     // Collection Rules
     match /users/{userId} {
       allow get: if isOwner(userId) || isAdmin();
@@ -86,6 +109,26 @@ service cloud.firestore {
           incoming().diff(existing()).affectedKeys().hasOnly(['userFeedback', 'status', 'message', 'updatedAt'])
         ))
       );
+    }
+
+    match /messages/{messageId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isValidMessage(incoming()) && isValidId(messageId);
+      allow delete: if isAdmin();
+    }
+
+    match /settings/{settingId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /bindings/{bindId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidBind(incoming());
+      allow update: if isAdmin() && isValidBind(incoming());
+      allow delete: if isAdmin();
     }
   }
 }

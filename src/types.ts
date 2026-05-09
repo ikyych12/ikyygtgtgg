@@ -42,6 +42,37 @@ export interface Report {
   isScreenshotConfirmed?: boolean;
 }
 
+export interface Message {
+  id: string;
+  userId: string;
+  userEmail: string;
+  role?: UserRole;
+  text: string;
+  createdAt: number;
+}
+
+export interface AppSettings {
+  chatEnabled: boolean;
+}
+
+export enum BindStatus {
+  SECURE = 'SECURE',
+  PENDING = 'PENDING',
+  COMPROMISED = 'COMPROMISED'
+}
+
+export interface AccountBind {
+  id: string;
+  accountId?: string;
+  accountName: string;
+  emailBind: string;
+  location?: string;
+  device?: string;
+  status: BindStatus;
+  notes?: string;
+  createdAt: number;
+}
+
 export interface AppState {
   currentUser: User | null;
   users: User[];

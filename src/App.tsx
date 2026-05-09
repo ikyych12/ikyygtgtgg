@@ -20,10 +20,15 @@ import {
   ChevronRight,
   Upload,
   ArrowLeft,
-  Chrome
+  Chrome,
+  Trash2,
+  Settings,
+  Search,
+  Eraser,
+  FileText
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, UserRole, Report, ReportStatus, AppState } from './types';
+import { User, UserRole, Report, ReportStatus, AppState, Message, AppSettings, AccountBind, BindStatus } from './types';
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
@@ -46,9 +51,11 @@ import {
   orderBy,
   updateDoc,
   addDoc,
+  deleteDoc,
   limit,
   getDocs,
   serverTimestamp,
+  writeBatch,
   Timestamp,
   Firestore
 } from 'firebase/firestore';
@@ -78,6 +85,7 @@ interface FirestoreErrorInfo {
     userId?: string | null;
     email?: string | null;
     emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
   }
 }
 
@@ -88,6 +96,7 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
       emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
     },
     operationType,
     path
@@ -115,13 +124,323 @@ const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 
   </motion.div>
 );
 
+const GlobalChat = ({ currentUser, showToast, chatSettings, onResetChat }: { 
+  currentUser: User, 
+  showToast: (m: string, t?: 'success' | 'error') => void, 
+  chatSettings: AppSettings,
+  onResetChat?: () => void 
+}) => {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const q = query(
+      collection(db, 'messages'),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const msgs = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Message));
+      setMessages(msgs.reverse());
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'messages');
+    });
+
+    return () => unsubscribe();
+  }, [currentUser.id]);
+
+  const sendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMessage.trim() || sending) return;
+    if (!chatSettings.chatEnabled && currentUser?.role !== UserRole.ADMIN) {
+      showToast('Chat sedang dinonaktifkan oleh Admin', 'error');
+      return;
+    }
+
+    setSending(true);
+    try {
+      const messageData: Omit<Message, 'id'> = {
+        userId: currentUser.id,
+        userEmail: currentUser.email,
+        role: currentUser?.role,
+        text: newMessage.trim(),
+        createdAt: Date.now()
+      };
+      await addDoc(collection(db, 'messages'), messageData);
+      setNewMessage('');
+    } catch (error) {
+      console.error('Send error:', error);
+      showToast('Gagal mengirim pesan', 'error');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const deleteMessage = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'messages', id));
+      showToast('Pesan dihapus');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `messages/${id}`);
+    }
+  };
+
+  const isChatDisabled = !chatSettings.chatEnabled && currentUser?.role !== UserRole.ADMIN;
+
+  return (
+    <div className="bg-slate-100 rounded-[2.5rem] p-6 flex flex-col h-[500px] relative overflow-hidden">
+      {isChatDisabled && (
+        <div className="absolute inset-0 z-10 bg-slate-100/80 backdrop-blur-[2px] flex flex-col items-center justify-center p-8 text-center space-y-4">
+           <div className="w-16 h-16 bg-white rounded-3xl flex items-center justify-center text-slate-400 shadow-sm">
+             <AlertCircle size={32} />
+           </div>
+           <div>
+             <h4 className="font-bold text-slate-600">Chat Global Dinonaktifkan</h4>
+             <p className="text-xs text-slate-400 mt-1">Admin telah menonaktifkan fitur chat untuk sementara.</p>
+           </div>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <div className={`w-2 h-2 rounded-full animate-pulse ${chatSettings.chatEnabled ? 'bg-green-500' : 'bg-red-500'}`} />
+          <h4 className="font-bold text-lg">Chat Global</h4>
+        </div>
+        <div className="flex items-center gap-2">
+          {currentUser.role === UserRole.ADMIN && (
+            <button 
+              onClick={onResetChat}
+              className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+              title="Reset Chat"
+            >
+              <Eraser size={14} />
+            </button>
+          )}
+          {!chatSettings.chatEnabled && currentUser.role === UserRole.ADMIN && (
+            <span className="text-[9px] font-black uppercase text-red-500 bg-red-50 px-2 py-0.5 rounded-full ring-1 ring-red-100">Hidden</span>
+          )}
+        </div>
+      </div>
+      
+      <div className="flex-1 overflow-y-auto space-y-4 mb-4 pr-2 custom-scrollbar">
+        {messages.map((msg) => (
+          <div 
+            key={msg.id} 
+            className={`flex flex-col ${msg.userId === currentUser.id ? 'items-end' : 'items-start'} group`}
+          >
+            <div className="flex items-center gap-1.5 mb-1 px-1">
+              {currentUser.role === UserRole.ADMIN && (
+                <button 
+                  onClick={() => deleteMessage(msg.id)}
+                  className="p-1 text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                >
+                  <Trash2 size={12} />
+                </button>
+              )}
+              <span className={`text-[10px] font-black uppercase ${msg.role === UserRole.ADMIN ? 'text-orange-500' : 'text-slate-400'}`}>
+                {msg.role === UserRole.ADMIN ? 'Admin Garena Freefire' : msg.userEmail.split('@')[0]}
+              </span>
+              <span className="text-[8px] text-slate-300">
+                {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            </div>
+            <div className={`max-w-[85%] px-4 py-2 rounded-2xl text-xs font-medium ${
+              msg.userId === currentUser.id 
+                ? 'bg-orange-500 text-white rounded-tr-none' 
+                : 'bg-white text-slate-700 shadow-sm rounded-tl-none'
+            }`}>
+              {msg.text}
+            </div>
+          </div>
+        ))}
+        {messages.length === 0 && (
+          <div className="h-full flex items-center justify-center text-slate-400 italic text-sm">
+            Belum ada pesan. Mulai obrolan!
+          </div>
+        )}
+      </div>
+
+      <form onSubmit={sendMessage} className="flex gap-2">
+        <input 
+          value={newMessage}
+          onChange={(e) => setNewMessage(e.target.value)}
+          placeholder={isChatDisabled ? "Chat dinonaktifkan..." : "Tulis pesan..."}
+          disabled={isChatDisabled}
+          className="flex-1 bg-white rounded-xl px-4 py-2 text-sm border-none focus:ring-2 focus:ring-orange-500 outline-none shadow-sm disabled:opacity-50"
+        />
+        <button 
+          disabled={!newMessage.trim() || sending || isChatDisabled}
+          className="w-10 h-10 bg-orange-500 text-white rounded-xl flex items-center justify-center hover:bg-orange-600 transition-all disabled:opacity-50 active:scale-95 shadow-lg shadow-orange-100"
+        >
+          {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
+        </button>
+      </form>
+    </div>
+  );
+};
+
+const CekBind = ({ bindings, bindSearch, setBindSearch, isAdmin, onDelete, onUpdateNote }: { 
+  bindings: AccountBind[], 
+  bindSearch: string, 
+  setBindSearch: (v: string) => void,
+  isAdmin?: boolean,
+  onDelete?: (id: string) => void,
+  onUpdateNote?: (id: string, note: string) => void
+}) => {
+  const filtered = bindings.filter(b => 
+    b.accountName.toLowerCase().includes(bindSearch.toLowerCase()) || 
+    b.emailBind.toLowerCase().includes(bindSearch.toLowerCase()) ||
+    b.accountId?.toLowerCase().includes(bindSearch.toLowerCase())
+  );
+
+  return (
+    <div className="space-y-6 pb-24">
+      <div className="bg-slate-900 rounded-[2.5rem] p-8 text-white relative overflow-hidden shadow-2xl shadow-orange-100">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-orange-500/10 rounded-full blur-3xl -mr-20 -mt-20" />
+        <div className="relative z-10 space-y-4">
+           <div className="flex items-center gap-3">
+             <div className="w-12 h-12 bg-orange-500 rounded-2xl flex items-center justify-center ring-4 ring-orange-500/20">
+               <ShieldCheck size={24} />
+             </div>
+             <div>
+               <h3 className="text-xl font-black uppercase tracking-tight">Status Bind Akun</h3>
+               <p className="text-xs text-slate-400 font-medium">Verifikasi keamanan & kepemilikan bind google</p>
+             </div>
+           </div>
+
+           <div className="relative">
+             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+             <input 
+               value={bindSearch}
+               onChange={(e) => setBindSearch(e.target.value)}
+               placeholder="Cari nama akun atau email bind..."
+               className="w-full bg-slate-800 border-none rounded-2xl py-4 pl-12 pr-4 text-sm focus:ring-2 focus:ring-orange-500 outline-none transition-all placeholder:text-slate-600 shadow-inner"
+             />
+           </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4">
+        <AnimatePresence mode="popLayout">
+          {filtered.length > 0 ? filtered.map((bind) => (
+            <motion.div 
+              layout
+              key={bind.id}
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white border rounded-[2rem] p-6 shadow-sm hover:shadow-md transition-all relative overflow-hidden group"
+            >
+              <div className={`absolute top-0 right-0 w-2 h-full ${
+                bind.status === BindStatus.SECURE ? 'bg-green-500' : 
+                bind.status === BindStatus.PENDING ? 'bg-orange-500' : 'bg-red-500'
+              }`} />
+              
+              <div className="flex items-start justify-between gap-4">
+                 <div className="space-y-4 flex-1">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                           <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider ${
+                             bind.status === BindStatus.SECURE ? 'bg-green-50 text-green-600 ring-1 ring-green-100' : 
+                             bind.status === BindStatus.PENDING ? 'bg-orange-50 text-orange-600 ring-1 ring-orange-100' : 
+                             'bg-red-50 text-red-600 ring-1 ring-red-100'
+                           }`}>
+                             {bind.status}
+                           </span>
+                           <span className="text-[10px] text-slate-400 font-mono">ID: {bind.accountId || bind.id.slice(0,8)}</span>
+                        </div>
+                        
+                        {isAdmin && onDelete && (
+                          <button 
+                            onClick={() => {
+                              if (window.confirm('Hapus data bind ini?')) {
+                                onDelete(bind.id);
+                              }
+                            }}
+                            className="p-1.5 text-red-500 hover:text-red-700 bg-red-50 rounded-lg transition-all"
+                            title="Hapus Data"
+                          >
+                             <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
+
+                    <div>
+                       <div className="flex items-center justify-between">
+                          <h4 className="font-bold text-lg text-slate-800">{bind.accountName}</h4>
+                          {bind.accountId && <span className="text-[10px] font-bold bg-slate-100 px-2 py-0.5 rounded text-slate-500">#{bind.accountId}</span>}
+                       </div>
+                       <p className="text-sm font-medium text-slate-500 flex items-center gap-1.5 mt-0.5">
+                         <Chrome size={14} className="text-slate-400" />
+                         {bind.emailBind}
+                       </p>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 pt-2">
+                       <div className="bg-slate-50 p-2.5 rounded-xl min-w-0">
+                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-tighter mb-0.5">LOKASI AKTIF</p>
+                          <p className="text-xs font-bold text-slate-700 truncate" title={bind.location}>{bind.location || 'Tidak diketahui'}</p>
+                       </div>
+                       <div className="bg-slate-50 p-2.5 rounded-xl min-w-0">
+                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-tighter mb-0.5">DEVICE LOGIN</p>
+                          <p className="text-xs font-bold text-slate-700 truncate" title={bind.device}>{bind.device || 'N/A'}</p>
+                       </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      {bind.notes && (
+                        <div className="bg-orange-50/50 p-3 rounded-xl border border-orange-100">
+                           <p className="text-[10px] text-orange-800 leading-relaxed italic">"{bind.notes}"</p>
+                        </div>
+                      )}
+                      
+                      {isAdmin && onUpdateNote && (
+                        <button 
+                          onClick={() => {
+                            const newNote = prompt('Set pesan / catatan untuk bind ini:', bind.notes || '');
+                            if (newNote !== null) onUpdateNote(bind.id, newNote);
+                          }}
+                          className="text-[10px] font-black uppercase text-orange-600 bg-orange-50 px-2 py-1 rounded hover:bg-orange-100 flex items-center gap-1 transition-all"
+                        >
+                          <Settings size={10} />
+                          Set Pesan
+                        </button>
+                      )}
+                    </div>
+                 </div>
+              </div>
+            </motion.div>
+          )) : (
+            <div className="bg-white border-2 border-dashed border-slate-200 rounded-[2.5rem] p-12 text-center text-slate-400">
+               <History size={48} className="mx-auto mb-4 opacity-20" />
+               <p className="font-bold">Data Tidak Ditemukan</p>
+               <p className="text-xs">Ulangi pencarian dengan kata kunci yang benar</p>
+            </div>
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+};
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [reports, setReports] = useState<Report[]>([]);
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'auth' | 'dashboard'>('auth');
+  const [activeTab, setActiveTab] = useState<'reports' | 'chat' | 'bind'>('reports');
   const [isAdminTab, setIsAdminTab] = useState(false);
+  const [chatSettings, setChatSettings] = useState<AppSettings>({ chatEnabled: true });
+  const [bindings, setBindings] = useState<AccountBind[]>([]);
+  const [bindSearch, setBindSearch] = useState('');
+  const [newBind, setNewBind] = useState<Partial<AccountBind>>({
+    status: BindStatus.SECURE
+  });
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [activeReportId, setActiveReportId] = useState<string | null>(null);
 
@@ -225,6 +544,34 @@ export default function App() {
     }
   }, [currentUser]);
 
+  // Listen to Global Settings & Bindings (only when logged in)
+  useEffect(() => {
+    if (!currentUser) {
+      setBindings([]);
+      return;
+    }
+
+    const unsubscribe = onSnapshot(doc(db, 'settings', 'global'), (snap) => {
+      if (snap.exists()) {
+        setChatSettings(snap.data() as AppSettings);
+      }
+    }, (error) => {
+      // Fail silently for settings to avoid disruptive errors on login transition
+      console.warn('Settings listener error:', error);
+    });
+
+    const bindUnsub = onSnapshot(query(collection(db, 'bindings'), orderBy('createdAt', 'desc')), (snap) => {
+      setBindings(snap.docs.map(d => ({ ...d.data(), id: d.id } as AccountBind)));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'bindings');
+    });
+
+    return () => {
+      unsubscribe();
+      bindUnsub();
+    };
+  }, [currentUser?.id]);
+
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
@@ -288,6 +635,87 @@ export default function App() {
       showToast('Laporan dikirim!');
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'reports');
+    }
+  };
+
+  const addBind = async () => {
+    if (!newBind.accountName || !newBind.emailBind) return;
+    try {
+      const id = doc(collection(db, 'bindings')).id;
+      const data: AccountBind = {
+        id,
+        accountId: newBind.accountId || '',
+        accountName: newBind.accountName || '',
+        emailBind: newBind.emailBind || '',
+        location: newBind.location || '',
+        device: newBind.device || '',
+        status: newBind.status || BindStatus.SECURE,
+        notes: newBind.notes || '',
+        createdAt: Date.now()
+      };
+      await setDoc(doc(db, 'bindings', id), data);
+      showToast('Data bind ditambahkan');
+      setNewBind({ status: BindStatus.SECURE });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'bindings');
+    }
+  };
+
+  const resetChat = async (skipConfirm = false) => {
+    if (!skipConfirm && !confirm('Hapus semua pesan chat?')) return;
+    try {
+      const snap = await getDocs(collection(db, 'messages'));
+      const batch = writeBatch(db);
+      snap.docs.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+      showToast('Global chat telah di-reset');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'messages');
+    }
+  };
+
+  const resetBindings = async () => {
+    try {
+      const batch = writeBatch(db);
+      const snap = await getDocs(collection(db, 'bindings'));
+      snap.docs.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+      showToast('Semua data bind telah di-reset');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'bindings');
+    }
+  };
+
+  useEffect(() => {
+    // Temporary reset trigger
+    const hasReset = localStorage.getItem('data_reset_requested_v1');
+    if (!hasReset && currentUser?.role === UserRole.ADMIN) {
+      const doReset = async () => {
+        console.log('Resetting global chat and bindings as requested by user...');
+        await resetChat(true);
+        await resetBindings();
+        localStorage.setItem('data_reset_requested_v1', 'true');
+      };
+      doReset();
+    }
+  }, [currentUser]);
+
+  const deleteBind = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'bindings', id));
+      showToast('Data dihapus');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `bindings/${id}`);
+    }
+  };
+
+  const updateBindNote = async (id: string, notes: string) => {
+    try {
+      const bindRef = doc(db, 'bindings', id);
+      await updateDoc(bindRef, { notes });
+      showToast('Pesan bind diperbarui');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `bindings/${id}`);
     }
   };
 
@@ -554,9 +982,39 @@ export default function App() {
                 </div>
               </motion.div>
             )}
+            
+            {/* Nav Switch (Only in Dashboard) */}
+            {view === 'dashboard' && (
+               <div className="flex justify-center gap-4 mb-6">
+                  <button 
+                    onClick={() => setActiveTab('reports')}
+                    className={`text-[10px] font-black uppercase tracking-widest pb-1 border-b-2 transition-all ${
+                      activeTab === 'reports' ? 'border-orange-500 text-orange-500' : 'border-transparent text-slate-300'
+                    }`}
+                  >
+                    Laporan
+                  </button>
+                  <button 
+                    onClick={() => setActiveTab('bind')}
+                    className={`text-[10px] font-black uppercase tracking-widest pb-1 border-b-2 transition-all ${
+                      activeTab === 'bind' ? 'border-orange-500 text-orange-500' : 'border-transparent text-slate-300'
+                    }`}
+                  >
+                    Cek Bind
+                  </button>
+                  <button 
+                    onClick={() => setActiveTab('chat')}
+                    className={`text-[10px] font-black uppercase tracking-widest pb-1 border-b-2 transition-all ${
+                      activeTab === 'chat' ? 'border-orange-500 text-orange-500' : 'border-transparent text-slate-300'
+                    }`}
+                  >
+                    Chat Global
+                  </button>
+               </div>
+            )}
 
             {/* View: User Dashboard */}
-            {view === 'dashboard' && (!isAdminTab || currentUser?.role !== UserRole.ADMIN) && (
+            {view === 'dashboard' && activeTab === 'reports' && (!isAdminTab || currentUser?.role !== UserRole.ADMIN) && (
               <motion.div
                 key="user-view"
                 initial={{ opacity: 0, y: 20 }}
@@ -569,7 +1027,7 @@ export default function App() {
                     <UserIcon size={24} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h3 className="font-bold truncate">{currentUser.email}</h3>
+                    <h3 className="font-bold truncate">{currentUser?.email}</h3>
                     <div className="flex items-center gap-1.5 text-orange-600 text-xs font-semibold uppercase tracking-wider">
                       <span className="w-1.5 h-1.5 bg-orange-500 rounded-full animate-pulse" />
                       Status: Veteran User
@@ -815,8 +1273,44 @@ export default function App() {
               </motion.div>
             )}
 
+            {/* View: Cek Bind */}
+            {view === 'dashboard' && activeTab === 'bind' && currentUser && (
+              <motion.div
+                 key="bind-view"
+                 initial={{ opacity: 0, y: 20 }}
+                 animate={{ opacity: 1, y: 0 }}
+                 exit={{ opacity: 0, y: -20 }}
+              >
+                <CekBind 
+                  bindings={bindings} 
+                  bindSearch={bindSearch} 
+                  setBindSearch={setBindSearch} 
+                  isAdmin={currentUser?.role === UserRole.ADMIN}
+                  onDelete={deleteBind}
+                  onUpdateNote={updateBindNote}
+                />
+              </motion.div>
+            )}
+
+            {/* View: Global Chat */}
+            {view === 'dashboard' && activeTab === 'chat' && currentUser && (
+              <motion.div
+                key="chat-view"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+              >
+                <GlobalChat 
+                  currentUser={currentUser} 
+                  showToast={showToast} 
+                  chatSettings={chatSettings} 
+                  onResetChat={() => resetChat()}
+                />
+              </motion.div>
+            )}
+
             {/* View: Admin Dashboard */}
-            {view === 'dashboard' && isAdminTab && currentUser?.role === UserRole.ADMIN && (
+            {view === 'dashboard' && activeTab === 'reports' && isAdminTab && currentUser?.role === UserRole.ADMIN && (
               <motion.div
                 key="admin-view"
                 initial={{ opacity: 0, y: 20 }}
@@ -842,6 +1336,200 @@ export default function App() {
                       </div>
                       <div className="absolute -right-4 -bottom-4 opacity-10 rotate-12">
                         <ClipboardList size={120} />
+                      </div>
+                    </div>
+
+                      {/* Quick Navigation Cards */}
+                      <div className="grid grid-cols-2 gap-4">
+                        <motion.button 
+                          whileHover={{ y: -4 }}
+                          onClick={() => { setActiveTab('reports'); setIsAdminTab(false); }}
+                          className="bg-white border rounded-[2rem] p-6 text-left shadow-sm group"
+                        >
+                           <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center mb-3 group-hover:bg-orange-600 group-hover:text-white transition-all">
+                             <FileText size={18} />
+                           </div>
+                           <h4 className="font-bold text-slate-800">Support Reports</h4>
+                           <p className="text-[10px] text-slate-400 mt-1">Kelola permohonan pemulihan akun</p>
+                        </motion.button>
+
+                        <motion.button 
+                          whileHover={{ y: -4 }}
+                          onClick={() => { setActiveTab('bind'); setIsAdminTab(false); }}
+                          className="bg-white border rounded-[2rem] p-6 text-left shadow-sm group"
+                        >
+                           <div className="w-10 h-10 bg-green-100 text-green-600 rounded-xl flex items-center justify-center mb-3 group-hover:bg-green-600 group-hover:text-white transition-all">
+                             <ShieldCheck size={18} />
+                           </div>
+                           <h4 className="font-bold text-slate-800">Account Bindings</h4>
+                           <p className="text-[10px] text-slate-400 mt-1">Monitoring status bind google & email</p>
+                        </motion.button>
+                      </div>
+
+                      {/* Add Bind Record Section */}
+                      <div className="bg-white border rounded-[2rem] p-6 space-y-4 shadow-sm relative overflow-hidden">
+                        <div className="absolute top-0 right-0 p-4 opacity-5">
+                          <History size={64} />
+                        </div>
+                        <div className="flex items-center gap-2">
+                           <ShieldCheck size={18} className="text-orange-500" />
+                           <h3 className="font-bold text-sm uppercase tracking-tight">Add New Bind Status</h3>
+                        </div>
+                        
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black text-slate-400 uppercase ml-1">ID Akun (Game ID)</label>
+                          <input 
+                            value={newBind.accountId || ''}
+                            onChange={(e) => setNewBind({...newBind, accountId: e.target.value})}
+                            className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm focus:ring-2 focus:ring-orange-500 outline-none"
+                            placeholder="Contoh: 12345678" 
+                          />
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-3">
+                           <div className="space-y-1">
+                              <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Nama Akun</label>
+                              <input 
+                                value={newBind.accountName || ''}
+                                onChange={(e) => setNewBind({...newBind, accountName: e.target.value})}
+                                className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm focus:ring-2 focus:ring-orange-500 outline-none"
+                                placeholder="..." 
+                              />
+                           </div>
+                           <div className="space-y-1">
+                              <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Email Bind</label>
+                              <input 
+                                value={newBind.emailBind || ''}
+                                onChange={(e) => setNewBind({...newBind, emailBind: e.target.value})}
+                                className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm focus:ring-2 focus:ring-orange-500 outline-none"
+                                placeholder="..." 
+                              />
+                           </div>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-3">
+                           <div className="space-y-1">
+                              <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Status</label>
+                              <select 
+                                value={newBind.status}
+                                onChange={(e) => setNewBind({...newBind, status: e.target.value as BindStatus})}
+                                className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm focus:ring-2 focus:ring-orange-500 outline-none"
+                              >
+                                {Object.values(BindStatus).map(s => <option key={s} value={s}>{s}</option>)}
+                              </select>
+                           </div>
+                           <div className="space-y-1">
+                              <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Device</label>
+                              <input 
+                                value={newBind.device || ''}
+                                onChange={(e) => setNewBind({...newBind, device: e.target.value})}
+                                className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm focus:ring-2 focus:ring-orange-500 outline-none"
+                                placeholder="Device..." 
+                              />
+                           </div>
+                           <div className="space-y-1">
+                              <label className="text-[10px] font-black text-slate-400 uppercase ml-1">Lokasi</label>
+                              <input 
+                                value={newBind.location || ''}
+                                onChange={(e) => setNewBind({...newBind, location: e.target.value})}
+                                className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm focus:ring-2 focus:ring-orange-500 outline-none"
+                                placeholder="Location..." 
+                              />
+                           </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <div className="flex justify-between items-center ml-1">
+                            <label className="text-[10px] font-black text-slate-400 uppercase">Notes / Keterangan</label>
+                            <div className="flex flex-wrap gap-1">
+                              {["Akun Aman", "Proses Cek", "Trial Notice"].map(preset => (
+                                <button 
+                                  key={preset}
+                                  type="button"
+                                  onClick={() => {
+                                    const msg = preset === "Trial Notice" 
+                                      ? "device tersebut sudah di keluarkan dari akun bind tetapi mimin gabisa kirim email bind jangan lupa cek akun pemulihan di fitur cek pemulihan, ingat akun ini tidak permanen hanya trial"
+                                      : preset;
+                                    setNewBind({...newBind, notes: msg});
+                                  }}
+                                  className="text-[9px] bg-slate-100 hover:bg-orange-100 text-slate-500 hover:text-orange-600 px-1.5 py-0.5 rounded transition-colors font-bold"
+                                >
+                                  {preset}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <textarea 
+                            value={newBind.notes || ''}
+                            onChange={(e) => setNewBind({...newBind, notes: e.target.value})}
+                            className="w-full bg-slate-50 border-none rounded-xl p-3 text-sm focus:ring-2 focus:ring-orange-500 outline-none h-24 resize-none"
+                            placeholder="Catatan keamanan akun..." 
+                          />
+                        </div>
+
+                        <button 
+                          onClick={addBind}
+                          className="w-full bg-slate-900 text-white font-bold py-3 rounded-2xl hover:bg-slate-800 transition-all flex items-center justify-center gap-2"
+                        >
+                          <ShieldCheck size={18} />
+                          Publish Bind Record
+                        </button>
+                      </div>
+
+                      {/* Binding List Management */}
+                      <div className="bg-white border rounded-[2rem] p-6 space-y-4 shadow-sm">
+                         <div className="flex items-center justify-between">
+                            <h4 className="font-bold text-slate-400 uppercase text-[10px] tracking-widest">Recent Bind Logs</h4>
+                            <span className="bg-slate-100 text-slate-500 text-[10px] px-2 py-0.5 rounded-full font-bold">{bindings.length} Total</span>
+                         </div>
+                         <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                            {bindings.map(b => (
+                              <div key={b.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-2xl group/item">
+                                 <div>
+                                    <p className="text-xs font-bold text-slate-700">{b.accountName}</p>
+                                    <p className="text-[10px] text-slate-400">{b.emailBind}</p>
+                                 </div>
+                                 <button 
+                                   onClick={() => {
+                                     if(window.confirm('Hapus log ini?')) deleteBind(b.id);
+                                   }}
+                                   className="p-1.5 text-red-300 hover:text-red-500 transition-all"
+                                 >
+                                    <Trash2 size={14} />
+                                 </button>
+                              </div>
+                            ))}
+                         </div>
+                      </div>
+
+                      <div className="bg-white border rounded-[2rem] p-6 space-y-4 shadow-sm">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                           <Settings size={18} className="text-slate-400" />
+                           <h4 className="font-bold text-sm uppercase tracking-tight">Global Settings</h4>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between p-3 bg-slate-50 rounded-2xl">
+                         <div>
+                            <p className="text-xs font-bold text-slate-700">Fitur Chat Global</p>
+                            <p className="text-[10px] text-slate-400">Aktifkan atau nonaktifkan chat antar pengguna</p>
+                         </div>
+                         <button 
+                           onClick={async () => {
+                             try {
+                               await setDoc(doc(db, 'settings', 'global'), { chatEnabled: !chatSettings.chatEnabled }, { merge: true });
+                               showToast(`Chat ${!chatSettings.chatEnabled ? 'diaktifkan' : 'dinonaktifkan'}`);
+                             } catch (e) {
+                               showToast('Gagal merubah status chat', 'error');
+                             }
+                           }}
+                           className={`w-12 h-6 rounded-full relative transition-all ${chatSettings.chatEnabled ? 'bg-green-500' : 'bg-slate-300'}`}
+                         >
+                            <motion.div 
+                              animate={{ x: chatSettings.chatEnabled ? 24 : 4 }}
+                              className="absolute top-1 left-0 w-4 h-4 bg-white rounded-full shadow-sm"
+                            />
+                         </button>
                       </div>
                     </div>
 
@@ -1026,10 +1714,39 @@ export default function App() {
           </AnimatePresence>
         </main>
         
-        {/* Navigation / Status Bar simulation for extra mobile feel */}
+        {/* Bottom Navigation */}
         {!view.includes('auth') && (
-          <div className="absolute bottom-0 left-0 right-0 h-8 bg-white/80 backdrop-blur-md flex items-center justify-center">
-            <div className="w-24 h-1 bg-slate-300 rounded-full" />
+          <div className="bg-white/90 backdrop-blur-xl border-t p-4 z-50 md:hidden flex justify-between px-8">
+            <button 
+              onClick={() => { setActiveTab('reports'); setIsAdminTab(false); }}
+              className={`flex flex-col items-center gap-1 ${activeTab === 'reports' ? 'text-orange-500' : 'text-slate-400'}`}
+            >
+              <History size={20} />
+              <span className="text-[10px] font-bold">Laporan</span>
+            </button>
+            <button 
+              onClick={() => { setActiveTab('bind'); setIsAdminTab(false); }}
+              className={`flex flex-col items-center gap-1 ${activeTab === 'bind' ? 'text-orange-500' : 'text-slate-400'}`}
+            >
+              <ShieldCheck size={20} />
+              <span className="text-[10px] font-bold">Cek Bind</span>
+            </button>
+            <button 
+              onClick={() => { setActiveTab('chat'); setIsAdminTab(false); }}
+              className={`flex flex-col items-center gap-1 ${activeTab === 'chat' ? 'text-orange-500' : 'text-slate-400'}`}
+            >
+              <Send size={20} />
+              <span className="text-[10px] font-bold">Global</span>
+            </button>
+            {currentUser?.role === UserRole.ADMIN && (
+              <button 
+                onClick={() => setIsAdminTab(!isAdminTab)}
+                className={`flex flex-col items-center gap-1 ${isAdminTab ? 'text-orange-500' : 'text-slate-400'}`}
+              >
+                <Settings size={20} />
+                <span className="text-[10px] font-bold">Admin</span>
+              </button>
+            )}
           </div>
         )}
 

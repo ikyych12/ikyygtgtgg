@@ -30,6 +30,46 @@
         "message": { "type": "string" }
       },
       "required": ["id", "userId", "userEmail", "googleLama", "status", "createdAt", "updatedAt"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "Global chat message",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "role": { "type": "string", "enum": ["ADMIN", "USER"] },
+        "text": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "userId", "userEmail", "text", "createdAt"]
+    },
+    "AppSettings": {
+      "title": "AppSettings",
+      "description": "Global application settings",
+      "type": "object",
+      "properties": {
+        "chatEnabled": { "type": "boolean" }
+      },
+      "required": ["chatEnabled"]
+    },
+    "AccountBind": {
+      "title": "AccountBind",
+      "description": "Account binding information",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "accountId": { "type": "string" },
+        "accountName": { "type": "string" },
+        "emailBind": { "type": "string" },
+        "location": { "type": "string" },
+        "device": { "type": "string" },
+        "status": { "type": "string", "enum": ["SECURE", "PENDING", "COMPROMISED"] },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "accountName", "emailBind", "status", "createdAt"]
     }
   },
   "firestore": {
@@ -40,6 +80,18 @@
     "/reports/{reportId}": {
       "schema": "Report",
       "description": "User reports"
+    },
+    "/messages/{messageId}": {
+      "schema": "Message",
+      "description": "Global chat messages"
+    },
+    "/settings/{settingId}": {
+      "schema": "AppSettings",
+      "description": "Global settings"
+    },
+    "/bindings/{bindId}": {
+      "schema": "AccountBind",
+      "description": "Account binding records"
     }
   }
 }
