@@ -217,7 +217,10 @@ export default function App() {
     try {
       await signInWithPopup(auth, googleProvider);
       showToast('Login berhasil!');
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.code === 'auth/popup-closed-by-user') {
+        return;
+      }
       console.error(error);
       showToast('Autentikasi Gagal', 'error');
     }
