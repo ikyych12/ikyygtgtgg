@@ -121,6 +121,7 @@ export default function App() {
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'auth' | 'dashboard'>('auth');
+  const [isAdminTab, setIsAdminTab] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [activeReportId, setActiveReportId] = useState<string | null>(null);
 
@@ -216,6 +217,9 @@ export default function App() {
   useEffect(() => {
     if (currentUser) {
       setView('dashboard');
+      if (currentUser.role === UserRole.ADMIN) {
+        setIsAdminTab(true);
+      }
     } else {
       setView('auth');
     }
@@ -494,14 +498,26 @@ export default function App() {
             </div>
             <h1 className="font-bold text-xl tracking-tight">FF Guard</h1>
           </div>
-          {currentUser && (
-            <button 
-              onClick={handleLogout}
-              className="p-2 text-slate-400 hover:text-red-500 transition-colors"
-            >
-              <LogOut size={20} />
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {currentUser?.role === UserRole.ADMIN && (
+              <button 
+                onClick={() => setIsAdminTab(!isAdminTab)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                  isAdminTab ? 'bg-orange-500 text-white shadow-lg shadow-orange-200' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                }`}
+              >
+                {isAdminTab ? 'Admin Panel' : 'User View'}
+              </button>
+            )}
+            {currentUser && (
+              <button 
+                onClick={handleLogout}
+                className="p-2 text-slate-400 hover:text-red-500 transition-colors"
+              >
+                <LogOut size={20} />
+              </button>
+            )}
+          </div>
         </header>
 
         <main className="flex-1 overflow-y-auto px-6 pb-12">
@@ -540,7 +556,7 @@ export default function App() {
             )}
 
             {/* View: User Dashboard */}
-            {view === 'dashboard' && currentUser?.role === UserRole.USER && (
+            {view === 'dashboard' && (!isAdminTab || currentUser?.role !== UserRole.ADMIN) && (
               <motion.div
                 key="user-view"
                 initial={{ opacity: 0, y: 20 }}
@@ -800,7 +816,7 @@ export default function App() {
             )}
 
             {/* View: Admin Dashboard */}
-            {view === 'dashboard' && currentUser?.role === UserRole.ADMIN && (
+            {view === 'dashboard' && isAdminTab && currentUser?.role === UserRole.ADMIN && (
               <motion.div
                 key="admin-view"
                 initial={{ opacity: 0, y: 20 }}
