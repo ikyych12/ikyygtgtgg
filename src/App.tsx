@@ -1,0 +1,803 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect, useMemo } from 'react';
+import { 
+  LogOut, 
+  Send, 
+  User as UserIcon, 
+  ShieldCheck, 
+  Loader2, 
+  AlertCircle, 
+  CheckCircle2, 
+  Mail, 
+  Key, 
+  PlusCircle, 
+  History,
+  ClipboardList,
+  ChevronRight,
+  Upload,
+  ArrowLeft
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { User, UserRole, Report, ReportStatus } from './types';
+import { loadState, saveState, clearSession } from './lib/storage';
+
+// --- Components ---
+
+const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 'error', onClose: () => void }) => (
+  <motion.div
+    initial={{ opacity: 0, y: 50 }}
+    animate={{ opacity: 1, y: 0 }}
+    exit={{ opacity: 0, scale: 0.95 }}
+    className={`fixed bottom-4 left-4 right-4 p-4 rounded-xl shadow-lg border flex items-center gap-3 z-50 ${
+      type === 'success' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'
+    }`}
+  >
+    {type === 'success' ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
+    <p className="text-sm font-medium flex-1">{message}</p>
+    <button onClick={onClose} className="p-1 hover:bg-black/5 rounded-full ring-0 outline-none">
+      <LogOut size={16} className="rotate-90 opacity-40" />
+    </button>
+  </motion.div>
+);
+
+export default function App() {
+  const [state, setState] = useState(loadState());
+  const [view, setView] = useState<'auth' | 'dashboard'>('auth');
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
+
+  // Form states
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [ffId, setFfId] = useState('');
+  const [reason, setReason] = useState('');
+
+  // Admin Processing state
+  const [activeReportId, setActiveReportId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (state.currentUser) {
+      setView('dashboard');
+    } else {
+      setView('auth');
+    }
+  }, [state.currentUser]);
+
+  useEffect(() => {
+    saveState(state);
+  }, [state]);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  const handleRegister = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email || !password || password !== confirmPassword) {
+      showToast('Data tidak valid / password tidak cocok', 'error');
+      return;
+    }
+
+    if (state.users.find(u => u.email === email)) {
+      showToast('Email sudah terdaftar', 'error');
+      return;
+    }
+
+    const newUser: User = {
+      id: Math.random().toString(36).substr(2, 9),
+      email,
+      password,
+      role: email === 'admin@ff.com' ? UserRole.ADMIN : UserRole.USER,
+      createdAt: Date.now(),
+    };
+
+    setState(prev => ({
+      ...prev,
+      users: [...prev.users, newUser],
+      currentUser: newUser,
+    }));
+    showToast('Registrasi berhasil!');
+  };
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    const user = state.users.find(u => u.email === email && u.password === password);
+    if (user) {
+      setState(prev => ({ ...prev, currentUser: user }));
+      showToast('Login berhasil!');
+    } else {
+      showToast('Email atau password salah', 'error');
+    }
+  };
+
+  const handleLogout = () => {
+    clearSession();
+    setState(prev => ({ ...prev, currentUser: null }));
+    showToast('Berhasil logout');
+  };
+
+  const submitReport = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ffId || !reason) return;
+
+    const newReport: Report = {
+      id: Math.random().toString(36).substr(2, 9),
+      userId: state.currentUser!.id,
+      userEmail: state.currentUser!.email,
+      ffId,
+      reason,
+      status: ReportStatus.PENDING,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    setState(prev => ({
+      ...prev,
+      reports: [newReport, ...prev.reports],
+    }));
+    setFfId('');
+    setReason('');
+    showToast('Laporan terkirim ke Admin!');
+  };
+
+  const updateReportStatus = (id: string, updates: Partial<Report>) => {
+    setState(prev => ({
+      ...prev,
+      reports: prev.reports.map(r => r.id === id ? { ...r, ...updates, updatedAt: Date.now() } : r)
+    }));
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, reportId: string) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64String = reader.result as string;
+      updateReportStatus(reportId, { 
+        screenshotUrl: base64String, 
+        message: 'Admin telah mengirim screenshot akun. Silakan konfirmasi.' 
+      });
+      showToast('Screenshot terkirim!');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const activeReport = useMemo(() => 
+    state.reports.find(r => r.id === activeReportId), 
+  [state.reports, activeReportId]);
+
+  return (
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-900 selection:bg-orange-100 flex flex-col items-center p-0 md:p-4">
+      {/* Container wraps as a mobile screen for desktop */}
+      <div id="app-container" className="w-full max-w-md bg-white min-h-screen md:min-h-[800px] md:rounded-[3rem] md:shadow-2xl overflow-hidden relative border-slate-200 md:border flex flex-col transition-all duration-300">
+        
+        {/* Header */}
+        <header className="px-6 pt-12 pb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-orange-500 rounded-lg flex items-center justify-center">
+              <ShieldCheck className="text-white" size={20} />
+            </div>
+            <h1 className="font-bold text-xl tracking-tight">FF Guard</h1>
+          </div>
+          {state.currentUser && (
+            <button 
+              onClick={handleLogout}
+              className="p-2 text-slate-400 hover:text-red-500 transition-colors"
+            >
+              <LogOut size={20} />
+            </button>
+          )}
+        </header>
+
+        <main className="flex-1 overflow-y-auto px-6 pb-12">
+          <AnimatePresence mode="wait">
+            
+            {/* View: Auth */}
+            {view === 'auth' && (
+              <motion.div
+                key="auth-view"
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 20 }}
+                className="space-y-8 pt-6"
+              >
+                <div>
+                  <h2 className="text-3xl font-bold">{authMode === 'login' ? 'Selamat Datang' : 'Buat Akun Baru'}</h2>
+                  <p className="text-slate-500 mt-2">
+                    {authMode === 'login' ? 'Silakan login untuk memantau laporan Anda.' : 'Daftar sekarang untuk melaporkan akun yang hilang.'}
+                  </p>
+                </div>
+
+                <form onSubmit={authMode === 'login' ? handleLogin : handleRegister} className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-slate-700 ml-1">Email</label>
+                    <div className="relative">
+                      <Mail className="absolute left-3 top-3 text-slate-400" size={18} />
+                      <input 
+                        type="email" 
+                        required 
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="user@example.com"
+                        className="w-full bg-slate-100 border-none rounded-2xl py-3 pl-11 pr-4 focus:ring-2 focus:ring-orange-500 outline-none transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-slate-700 ml-1">Password</label>
+                    <div className="relative">
+                      <Key className="absolute left-3 top-3 text-slate-400" size={18} />
+                      <input 
+                        type="password" 
+                        required 
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="••••••••"
+                        className="w-full bg-slate-100 border-none rounded-2xl py-3 pl-11 pr-4 focus:ring-2 focus:ring-orange-500 outline-none transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  {authMode === 'register' && (
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-slate-700 ml-1">Konfirmasi Password</label>
+                      <div className="relative">
+                        <Key className="absolute left-3 top-3 text-slate-400" size={18} />
+                        <input 
+                          type="password" 
+                          required 
+                          value={confirmPassword}
+                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full bg-slate-100 border-none rounded-2xl py-3 pl-11 pr-4 focus:ring-2 focus:ring-orange-500 outline-none transition-all"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <button className="w-full bg-orange-500 text-white font-bold py-4 rounded-2xl shadow-lg shadow-orange-200 hover:bg-orange-600 active:scale-95 transition-all mt-4">
+                    {authMode === 'login' ? 'Masuk' : 'Daftar'}
+                  </button>
+                </form>
+
+                <div className="text-center">
+                  <button 
+                    onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
+                    className="text-sm text-slate-500 hover:text-orange-500 font-medium transition-colors"
+                  >
+                    {authMode === 'login' ? 'Belum punya akun? Daftar gratis' : 'Sudah punya akun? Login di sini'}
+                  </button>
+                </div>
+              </motion.div>
+            )}
+
+            {/* View: User Dashboard */}
+            {view === 'dashboard' && state.currentUser?.role === UserRole.USER && (
+              <motion.div
+                key="user-view"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="space-y-8 pt-2"
+              >
+                <div className="flex items-center gap-4 p-4 bg-orange-50 rounded-3xl">
+                  <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm text-orange-500">
+                    <UserIcon size={24} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold">{state.currentUser.email}</h3>
+                    <div className="flex items-center gap-1.5 text-orange-600 text-xs font-semibold uppercase tracking-wider">
+                      <span className="w-1.5 h-1.5 bg-orange-500 rounded-full animate-pulse" />
+                      Status: Veteran User
+                    </div>
+                  </div>
+                </div>
+
+                {/* Report Form */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-bold text-lg flex items-center gap-2">
+                      <PlusCircle size={20} className="text-orange-500" />
+                      Laporkan Akun Hilang
+                    </h4>
+                  </div>
+                  
+                  <form onSubmit={submitReport} className="bg-slate-100 p-6 rounded-3xl space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-slate-500 uppercase ml-1">ID Free Fire</label>
+                      <input 
+                        required
+                        placeholder="Contoh: 12345678"
+                        value={ffId}
+                        onChange={(e) => setFfId(e.target.value)}
+                        className="w-full bg-white border-none rounded-2xl py-3 px-4 focus:ring-2 focus:ring-orange-500 outline-none transition-all placeholder:text-slate-300 font-mono"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-slate-500 uppercase ml-1">Alasan Kehilangan</label>
+                      <textarea 
+                        required
+                        placeholder="Ceritakan bagaimana akun Anda hilang..."
+                        value={reason}
+                        onChange={(e) => setReason(e.target.value)}
+                        className="w-full bg-white border-none rounded-2xl py-3 px-4 focus:ring-2 focus:ring-orange-500 outline-none transition-all placeholder:text-slate-300 min-h-[100px] resize-none"
+                      />
+                    </div>
+                    <button className="w-full bg-slate-900 text-white font-bold py-3 px-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-800 transition-all">
+                      <Send size={18} />
+                      Kirim Laporan
+                    </button>
+                  </form>
+                </div>
+
+                {/* Report List */}
+                <div className="space-y-4">
+                  <h4 className="font-bold text-lg flex items-center gap-2">
+                    <History size={20} className="text-orange-500" />
+                    Riwayat Laporan
+                  </h4>
+                  <div className="space-y-3">
+                    {state.reports.filter(r => r.userId === state.currentUser?.id).map((report) => (
+                      <div key={report.id} className="p-4 border border-slate-100 rounded-3xl bg-white shadow-sm flex flex-col gap-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-mono text-sm font-bold opacity-30 tracking-tight">#{report.id}</span>
+                          <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                            report.status === ReportStatus.PENDING ? 'bg-amber-100 text-amber-700' :
+                            report.status === ReportStatus.PROSES ? 'bg-blue-100 text-blue-700' :
+                            'bg-green-100 text-green-700'
+                          }`}>
+                            {report.status}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-xs text-slate-400 font-medium tracking-tighter uppercase mb-0.5">ID Akun</p>
+                            <p className="font-bold text-slate-700 text-lg leading-none">{report.ffId}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-xs text-slate-400 font-medium tracking-tight whitespace-nowrap">Dibuat pada</p>
+                            <p className="text-xs font-bold text-slate-500">{new Date(report.createdAt).toLocaleDateString()}</p>
+                          </div>
+                        </div>
+
+                        <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Alasan</p>
+                          <p className="text-xs text-slate-600 line-clamp-2 italic">"{report.reason}"</p>
+                        </div>
+
+                        {/* Interactive parts for user when processing */}
+                        {report.status === ReportStatus.PROSES && (
+                          <div className="mt-2 p-4 bg-blue-50 border border-blue-100 rounded-2xl space-y-3">
+                            <p className="text-xs text-blue-800 font-medium italic">✨ {report.message || 'Admin sedang memproses akun Anda.'}</p>
+                            
+                            {/* Step 1: Confirm Screenshot */}
+                            {report.screenshotUrl && !report.isScreenshotConfirmed && (
+                              <div className="space-y-3">
+                                <div className="w-full aspect-video bg-slate-900 rounded-xl flex items-center justify-center border-2 border-dashed border-blue-200 relative overflow-hidden group">
+                                  <img 
+                                    src={report.screenshotUrl} 
+                                    alt="Bukti Akun" 
+                                    className="w-full h-full object-contain"
+                                    referrerPolicy="no-referrer"
+                                  />
+                                  <div className="absolute top-2 right-2 bg-blue-500 text-white p-1 rounded-lg shadow-lg">
+                                    <CheckCircle2 size={14} />
+                                  </div>
+                                </div>
+                                <div className="flex gap-2">
+                                  <button 
+                                    onClick={() => updateReportStatus(report.id, { isScreenshotConfirmed: true, message: 'Screenshot dikonfirmasi. Kirim data email Anda.' })}
+                                    className="flex-1 py-2.5 bg-green-500 text-white rounded-xl text-xs font-black uppercase italic shadow-sm"
+                                  >
+                                    Ya, Benar
+                                  </button>
+                                  <button 
+                                    onClick={() => updateReportStatus(report.id, { screenshotUrl: undefined, message: 'User menyatakan screenshot salah. Admin sedang mengecek ulang.' })}
+                                    className="flex-1 py-2.5 bg-white text-red-500 rounded-xl text-xs font-black border border-red-500/20 uppercase italic"
+                                  >
+                                    Salah
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Step 2: Email Data */}
+                            {report.isScreenshotConfirmed && !report.oldEmail && (
+                              <div className="space-y-2 pt-2 border-t border-blue-200/50">
+                                <p className="text-[10px] font-black uppercase text-blue-500 tracking-widest italic mb-2">Input Data Email Pemulihan</p>
+                                <input 
+                                  id={`old-email-input-${report.id}`}
+                                  placeholder="Masukkan Email Lama" 
+                                  className="w-full bg-white border border-blue-200 rounded-xl px-4 py-2.5 text-xs font-bold outline-none ring-offset-2 focus:ring-2 focus:ring-blue-500"
+                                />
+                                <input 
+                                  id={`new-email-input-${report.id}`}
+                                  placeholder="Masukkan Email Baru" 
+                                  className="w-full bg-white border border-blue-200 rounded-xl px-4 py-2.5 text-xs font-bold outline-none ring-offset-2 focus:ring-2 focus:ring-blue-500"
+                                />
+                                <button 
+                                  onClick={() => {
+                                    const oldE = (document.getElementById(`old-email-input-${report.id}`) as HTMLInputElement).value;
+                                    const newE = (document.getElementById(`new-email-input-${report.id}`) as HTMLInputElement).value;
+                                    if (oldE && newE) {
+                                      updateReportStatus(report.id, { oldEmail: oldE, newEmail: newE, message: 'Data email terkirim. Menunggu kode verifikasi.' });
+                                      showToast('Email Terkirim!');
+                                    }
+                                  }}
+                                  className="w-full bg-blue-600 text-white py-3 rounded-xl text-xs font-black uppercase italic tracking-widest mt-1"
+                                >
+                                  Kirim Data Email
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Step 3: Verification Code */}
+                            {report.verificationCode && !report.userEnteredCode && (
+                              <div className="space-y-2 pt-2 border-t border-blue-200/50">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-ping" />
+                                  <p className="text-[10px] font-black uppercase text-orange-600 tracking-widest italic">Kirim Kode Verifikasi</p>
+                                </div>
+                                <p className="text-[10px] text-blue-700 font-bold italic">
+                                  Cek email baru Anda untuk mendapatkan kode. 
+                                  <span className="text-slate-400"> (Simulasi: {report.verificationCode})</span>
+                                </p>
+                                <div className="flex gap-2">
+                                  <input 
+                                    placeholder="Enter 8-Digit Code" 
+                                    className="flex-1 bg-white border border-blue-200 rounded-xl px-4 py-2.5 text-sm font-black outline-none font-mono focus:ring-2 focus:ring-blue-500"
+                                    id={`verif-code-input-${report.id}`}
+                                    maxLength={8}
+                                  />
+                                  <button 
+                                    onClick={() => {
+                                      const input = document.getElementById(`verif-code-input-${report.id}`) as HTMLInputElement;
+                                      if (input.value.length === 8) {
+                                        updateReportStatus(report.id, { userEnteredCode: input.value, message: 'Kode sedang diverifikasi oleh Admin.' });
+                                        showToast('Kode Sent!');
+                                      } else {
+                                        showToast('Kode harus 8 digit!', 'error');
+                                      }
+                                    }}
+                                    className="bg-blue-600 text-white px-6 rounded-xl text-xs font-black uppercase italic"
+                                  >
+                                    Send
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Final wait */}
+                            {report.userEnteredCode && report.status === ReportStatus.PROSES && (
+                              <div className="p-4 bg-white/50 text-blue-700 rounded-xl flex items-center justify-center gap-3 border border-blue-200/50">
+                                <Loader2 size={16} className="animate-spin text-blue-500" />
+                                <span className="text-[10px] font-black italic tracking-widest uppercase">Admin: Final Verification...</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {report.status === ReportStatus.SELESAI && (
+                          <div className="mt-2 p-4 bg-green-50 border border-green-100 rounded-2xl">
+                             <p className="text-xs text-green-800 font-bold tracking-tight">Akun Anda sudah selesai dipulihkan! Silakan login ulang dengan email baru.</p>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+
+                    {state.reports.filter(r => r.userId === state.currentUser?.id).length === 0 && (
+                      <div className="text-center py-12 px-6 bg-slate-50 border-2 border-dashed border-slate-200 rounded-3xl space-y-3">
+                        <Loader2 className="mx-auto text-slate-300 animate-pulse" size={32} />
+                        <p className="text-slate-400 text-sm font-medium italic">Belum ada laporan akun hilang.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* View: Admin Dashboard */}
+            {view === 'dashboard' && state.currentUser?.role === UserRole.ADMIN && (
+              <motion.div
+                key="admin-view"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="space-y-6 pt-2"
+              >
+                {!activeReportId ? (
+                  <>
+                    <div className="bg-slate-900 text-white p-6 rounded-[2.5rem] shadow-xl overflow-hidden relative">
+                      <div className="relative z-10">
+                        <div className="flex items-center gap-2 opacity-60 mb-1">
+                          <ShieldCheck size={14} />
+                          <span className="text-[10px] font-black uppercase tracking-[0.2em]">Authority Portal</span>
+                        </div>
+                        <h2 className="text-2xl font-bold italic leading-tight uppercase tracking-tight">Pending Approval</h2>
+                        <div className="flex items-baseline gap-2 mt-4">
+                          <span className="text-5xl font-black text-orange-400 tracking-tighter tabular-nums leading-none">
+                            {state.reports.filter(r => r.status !== ReportStatus.SELESAI).length}
+                          </span>
+                          <span className="text-sm font-bold opacity-60 italic whitespace-nowrap">Active Laps</span>
+                        </div>
+                      </div>
+                      <div className="absolute -right-4 -bottom-4 opacity-10 rotate-12">
+                        <ClipboardList size={120} />
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <h4 className="font-bold text-slate-500 uppercase text-xs tracking-widest ml-1 font-mono tracking-tighter">Queue: ALL_RPTS</h4>
+                      <div className="space-y-3">
+                        {state.reports.map(report => (
+                          <button 
+                            key={report.id}
+                            onClick={() => setActiveReportId(report.id)}
+                            className="w-full text-left p-5 bg-white border hover:border-orange-200 rounded-3xl transition-all group flex items-center justify-between"
+                          >
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-[10px] font-black tracking-widest uppercase py-1 px-2 border rounded-md bg-slate-50 text-slate-400">ID {report.ffId}</span>
+                                <span className={`w-1.5 h-1.5 rounded-full ${
+                                  report.status === ReportStatus.PENDING ? 'bg-amber-400' :
+                                  report.status === ReportStatus.PROSES ? 'bg-blue-400' :
+                                  'bg-green-400'
+                                }`} />
+                              </div>
+                              <p className="font-bold text-slate-800 italic leading-none">{report.userEmail}</p>
+                              <p className="text-[10px] text-slate-400 font-medium">#{report.id} • {new Date(report.createdAt).toLocaleDateString()}</p>
+                            </div>
+                            <div className="w-10 h-10 rounded-2xl bg-slate-50 flex items-center justify-center group-hover:bg-orange-50 group-hover:text-orange-500 transition-colors">
+                              <ChevronRight size={20} />
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <motion.div
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className="space-y-6"
+                  >
+                    <button onClick={() => setActiveReportId(null)} className="flex items-center gap-2 text-slate-400 hover:text-slate-900 transition-colors mb-2">
+                      <ArrowLeft size={18} />
+                      <span className="text-xs font-bold uppercase tracking-widest italic">Back to Queue</span>
+                    </button>
+
+                    <div className="bg-white border rounded-[2rem] overflow-hidden shadow-sm">
+                      <div className="p-6 bg-slate-50 border-b flex justify-between items-center">
+                        <div>
+                          <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">Processing Case</p>
+                          <h3 className="text-lg font-black italic uppercase tracking-tighter">FF_ACC: {activeReport?.ffId}</h3>
+                        </div>
+                        <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${
+                          activeReport?.status === ReportStatus.PENDING ? 'bg-amber-100 text-amber-700' :
+                          activeReport?.status === ReportStatus.PROSES ? 'bg-blue-100 text-blue-700' :
+                          'bg-green-100 text-green-700'
+                        }`}>
+                          {activeReport?.status}
+                        </span>
+                      </div>
+
+                      <div className="p-6 space-y-6">
+                        
+                        {/* Summary */}
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase">Pelapor</p>
+                            <p className="text-xs font-black truncate">{activeReport?.userEmail}</p>
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase">Case ID</p>
+                            <p className="text-xs font-black">#{activeReport?.id}</p>
+                          </div>
+                        </div>
+
+                        <div className="p-4 bg-slate-50 rounded-2xl border">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Alasan dari User</p>
+                          <p className="text-xs italic text-slate-600 font-medium">"{activeReport?.reason}"</p>
+                        </div>
+
+                        <div className="space-y-4 pt-4 border-t border-dashed">
+                          {/* Step 1: Start Process */}
+                          {activeReport?.status === ReportStatus.PENDING && (
+                            <button 
+                              onClick={() => updateReportStatus(activeReportId!, { status: ReportStatus.PROSES, message: 'Admin sedang mencari data akun Anda.' })}
+                              className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black italic uppercase tracking-widest hover:bg-blue-700 active:scale-95 transition-all outline-none"
+                            >
+                              🚀 Start Process
+                            </button>
+                          )}
+
+                          {/* Step 2: Processing Steps */}
+                          {activeReport?.status === ReportStatus.PROSES && (
+                            <div className="space-y-6">
+                              
+                              {/* Action: Send Screenshot */}
+                              {!activeReport.screenshotUrl && (
+                                <div className="w-full">
+                                  <input 
+                                    type="file" 
+                                    accept="image/*" 
+                                    id="admin-ss-upload" 
+                                    className="hidden" 
+                                    onChange={(e) => handleFileUpload(e, activeReportId!)}
+                                  />
+                                  <label 
+                                    htmlFor="admin-ss-upload"
+                                    className="w-full py-4 bg-orange-500 text-white rounded-2xl font-black italic uppercase tracking-widest flex items-center justify-center gap-2 cursor-pointer hover:bg-orange-600 transition-all active:scale-95 shadow-lg shadow-orange-100"
+                                  >
+                                    <Upload size={20} /> Ambil Dari Galeri
+                                  </label>
+                                </div>
+                              )}
+
+                              {/* Wait: User Confirmation */}
+                              {activeReport.screenshotUrl && !activeReport.isScreenshotConfirmed && (
+                                <div className="p-5 bg-amber-50 border border-amber-200 rounded-[2rem] text-center space-y-3">
+                                  <Loader2 size={24} className="animate-spin mx-auto text-amber-500" />
+                                  <p className="text-[10px] font-black italic uppercase text-amber-600 tracking-[0.1em]">Menunggu User Konfirmasi Screenshot...</p>
+                                </div>
+                              )}
+
+                              {/* Action: Request Emails */}
+                              {activeReport.isScreenshotConfirmed && !activeReport.oldEmail && (
+                                <button 
+                                  onClick={() => updateReportStatus(activeReportId!, { message: 'Screenshot dikonfirmasi. Kirimkan email lama dan email baru Anda.' })}
+                                  className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black italic uppercase tracking-widest"
+                                >
+                                  Minta Email Lama & Baru
+                                </button>
+                              )}
+
+                              {/* Action: Send Verif Code */}
+                              {activeReport.oldEmail && !activeReport.verificationCode && (
+                                <div className="space-y-4 p-6 bg-slate-900 text-white rounded-[2rem] shadow-lg">
+                                  <div className="flex items-center gap-2 opacity-50 mb-2">
+                                    <ShieldCheck size={14} />
+                                    <span className="text-[10px] font-black uppercase tracking-[0.2em]">Credential Management</span>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-4">
+                                    <div className="p-3 bg-white/10 rounded-xl border border-white/10">
+                                      <p className="text-[10px] font-bold opacity-50 uppercase mb-1">Old Email</p>
+                                      <p className="text-xs font-bold truncate leading-none">{activeReport.oldEmail}</p>
+                                    </div>
+                                    <div className="p-3 bg-white/10 rounded-xl border border-white/10">
+                                      <p className="text-[10px] font-bold opacity-50 uppercase mb-1">New Email</p>
+                                      <p className="text-xs font-bold truncate leading-none">{activeReport.newEmail}</p>
+                                    </div>
+                                  </div>
+                                  <button 
+                                    onClick={() => updateReportStatus(activeReportId!, { 
+                                      verificationCode: Math.floor(10000000 + Math.random() * 90000000).toString(),
+                                      message: 'Kode verifikasi telah dikirim ke email baru.'
+                                    })}
+                                    className="w-full bg-orange-500 text-white py-4 rounded-xl font-black italic uppercase tracking-widest mt-2"
+                                  >
+                                    Kirim Kode ke Email Baru
+                                  </button>
+                                </div>
+                              )}
+
+                              {/* Action: Check Code & Finalize */}
+                              {activeReport.verificationCode && (
+                                <div className="p-6 bg-slate-900 text-white rounded-[2rem] space-y-4 shadow-lg border border-white/5">
+                                  <div className="flex items-center justify-between">
+                                     <div className="flex items-center gap-2">
+                                       <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+                                       <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 italic">Status Verifikasi User</span>
+                                     </div>
+                                     <span className="font-mono text-[10px] bg-white/10 px-2 py-1 rounded border border-white/10 opacity-50">CODE: {activeReport.verificationCode}</span>
+                                  </div>
+                                  
+                                  <div className="space-y-3">
+                                    <p className="text-[10px] font-black uppercase text-slate-500 tracking-widest italic ml-1">Input Dari User</p>
+                                    
+                                    <div className="p-4 bg-white/5 rounded-2xl border border-white/10 flex items-center justify-between">
+                                      <div className="flex flex-col gap-0.5">
+                                         <p className="text-[10px] font-bold text-slate-500 uppercase">Input User:</p>
+                                         <p className="font-mono text-xl font-black tracking-[0.2em] text-blue-400">
+                                           {activeReport.userEnteredCode || '--------'}
+                                         </p>
+                                      </div>
+                                      
+                                      {!activeReport.userEnteredCode && (
+                                        <div className="bg-white/5 text-white/40 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-tighter animate-pulse">
+                                          Menunggu
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {activeReport.userEnteredCode && (
+                                    <div className="grid grid-cols-2 gap-3 pt-2">
+                                      <motion.button 
+                                        whileTap={{ scale: 0.95 }}
+                                        onClick={() => {
+                                          const reporter = state.users.find(u => u.id === activeReport.userId);
+                                          if (reporter) {
+                                            const updatedUsers = state.users.map(u => 
+                                              u.id === reporter.id ? { ...u, email: activeReport.newEmail! } : u
+                                            );
+                                            
+                                            updateReportStatus(activeReportId!, { 
+                                              status: ReportStatus.SELESAI, 
+                                              message: 'Akun sukses dipulihkan! Silakan login dengan email baru.' 
+                                            });
+  
+                                            setState(prev => ({
+                                              ...prev,
+                                              users: updatedUsers,
+                                              currentUser: null
+                                            }));
+  
+                                            showToast('Proses Selesai! Akun Berhasil Dipulihkan.', 'success');
+                                            setActiveReportId(null);
+                                          }
+                                        }}
+                                        className="bg-green-500 text-slate-900 font-black italic uppercase tracking-widest py-3 px-4 rounded-xl flex items-center justify-center gap-2"
+                                      >
+                                        <CheckCircle2 size={16} /> Berhasil
+                                      </motion.button>
+
+                                      <motion.button 
+                                        whileTap={{ scale: 0.95 }}
+                                        onClick={() => {
+                                          updateReportStatus(activeReportId!, { 
+                                            userEnteredCode: undefined,
+                                            message: 'Kode yang Anda masukkan salah. Silakan kirim ulang kode yang benar.' 
+                                          });
+                                          showToast('Status: Kode Salah!', 'error');
+                                        }}
+                                        className="bg-red-500 text-white font-black italic uppercase tracking-widest py-3 px-4 rounded-xl flex items-center justify-center gap-2"
+                                      >
+                                        <LogOut size={16} className="-rotate-90" /> Salah
+                                      </motion.button>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {activeReport?.status === ReportStatus.SELESAI && (
+                          <div className="p-6 bg-green-50 border border-green-200 rounded-[2rem] text-center space-y-2">
+                             <CheckCircle2 className="mx-auto text-green-600 mb-2" size={32} />
+                             <h5 className="font-black italic uppercase tracking-widest text-green-700">Closed Case</h5>
+                             <p className="text-xs text-green-600 font-bold opacity-80">This account was successfully migrated.</p>
+                          </div>
+                        )}
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+        </main>
+        
+        {/* Navigation / Status Bar simulation for extra mobile feel */}
+        {!view.includes('auth') && (
+          <div className="absolute bottom-0 left-0 right-0 h-8 bg-white/80 backdrop-blur-md flex items-center justify-center">
+            <div className="w-24 h-1 bg-slate-300 rounded-full" />
+          </div>
+        )}
+
+        <AnimatePresence>
+          {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
