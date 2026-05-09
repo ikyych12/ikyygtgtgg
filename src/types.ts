@@ -4,14 +4,14 @@
  */
 
 export enum UserRole {
-  USER = 'user',
-  ADMIN = 'admin',
+  USER = 'USER',
+  ADMIN = 'ADMIN',
 }
 
 export enum ReportStatus {
-  PENDING = 'Pending',
-  PROSES = 'Proses',
-  SELESAI = 'Selesai',
+  PENDING = 'PENDING',
+  PROSES = 'PROSES',
+  SELESAI = 'SELESAI',
 }
 
 export interface User {

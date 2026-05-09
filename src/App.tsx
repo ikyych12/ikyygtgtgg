@@ -19,11 +19,80 @@ import {
   ClipboardList,
   ChevronRight,
   Upload,
-  ArrowLeft
+  ArrowLeft,
+  Chrome
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, UserRole, Report, ReportStatus } from './types';
-import { loadState, saveState, clearSession } from './lib/storage';
+import { User, UserRole, Report, ReportStatus, AppState } from './types';
+import { initializeApp } from 'firebase/app';
+import { 
+  getAuth, 
+  onAuthStateChanged, 
+  signInWithPopup, 
+  GoogleAuthProvider, 
+  signOut,
+  User as FirebaseUser
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  doc, 
+  setDoc, 
+  getDoc, 
+  getDocFromServer,
+  collection, 
+  onSnapshot, 
+  query, 
+  where, 
+  orderBy,
+  updateDoc,
+  addDoc,
+  serverTimestamp,
+  Timestamp,
+  Firestore
+} from 'firebase/firestore';
+import firebaseConfig from '../firebase-applet-config.json';
+
+// --- Firebase Initialization ---
+const app = initializeApp(firebaseConfig);
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const auth = getAuth(app);
+const googleProvider = new GoogleAuthProvider();
+
+// --- Error Handling ---
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
 
 // --- Components ---
 
@@ -45,112 +114,155 @@ const Toast = ({ message, type, onClose }: { message: string, type: 'success' | 
 );
 
 export default function App() {
-  const [state, setState] = useState(loadState());
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [reports, setReports] = useState<Report[]>([]);
+  const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'auth' | 'dashboard'>('auth');
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
+  const [activeReportId, setActiveReportId] = useState<string | null>(null);
 
   // Form states
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [ffId, setFfId] = useState('');
   const [reason, setReason] = useState('');
 
-  // Admin Processing state
-  const [activeReportId, setActiveReportId] = useState<string | null>(null);
+  // 1. Auth Observer
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      if (fbUser) {
+        // Sync user profile
+        try {
+          const userRef = doc(db, 'users', fbUser.uid);
+          const userSnap = await getDoc(userRef);
+          
+          if (userSnap.exists()) {
+            setCurrentUser(userSnap.data() as User);
+          } else {
+            // Create profile
+            const newUser: User = {
+              id: fbUser.uid,
+              email: fbUser.email || '',
+              role: fbUser.email === 'kytyg800@gmail.com' ? UserRole.ADMIN : UserRole.USER,
+              createdAt: Date.now(),
+            };
+            await setDoc(userRef, newUser);
+            setCurrentUser(newUser);
+          }
+        } catch (error) {
+          handleFirestoreError(error, OperationType.GET, `users/${fbUser.uid}`);
+        }
+      } else {
+        setCurrentUser(null);
+      }
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // 2. Data Sync
+  useEffect(() => {
+    if (!currentUser) {
+      setReports([]);
+      setAllUsers([]);
+      return;
+    }
+
+    let unsubscribeReports = () => {};
+    let unsubscribeUsers = () => {};
+
+    if (currentUser.role === UserRole.ADMIN) {
+      // Admin: See all reports and all users
+      const reportsQuery = query(collection(db, 'reports'), orderBy('createdAt', 'desc'));
+      unsubscribeReports = onSnapshot(reportsQuery, (snapshot) => {
+        setReports(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Report)));
+      }, (error) => handleFirestoreError(error, OperationType.LIST, 'reports'));
+
+      const usersQuery = query(collection(db, 'users'));
+      unsubscribeUsers = onSnapshot(usersQuery, (snapshot) => {
+        setAllUsers(snapshot.docs.map(doc => doc.data() as User));
+      }, (error) => handleFirestoreError(error, OperationType.LIST, 'users'));
+    } else {
+      // User: See only own reports
+      const reportsQuery = query(
+        collection(db, 'reports'), 
+        where('userId', '==', currentUser.id),
+        orderBy('createdAt', 'desc')
+      );
+      unsubscribeReports = onSnapshot(reportsQuery, (snapshot) => {
+        setReports(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Report)));
+      }, (error) => handleFirestoreError(error, OperationType.LIST, 'reports'));
+    }
+
+    return () => {
+      unsubscribeReports();
+      unsubscribeUsers();
+    };
+  }, [currentUser]);
 
   useEffect(() => {
-    if (state.currentUser) {
+    if (currentUser) {
       setView('dashboard');
     } else {
       setView('auth');
     }
-  }, [state.currentUser]);
-
-  useEffect(() => {
-    saveState(state);
-  }, [state]);
+  }, [currentUser]);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
   };
 
-  const handleRegister = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email || !password || password !== confirmPassword) {
-      showToast('Data tidak valid / password tidak cocok', 'error');
-      return;
-    }
-
-    if (state.users.find(u => u.email === email)) {
-      showToast('Email sudah terdaftar', 'error');
-      return;
-    }
-
-    const newUser: User = {
-      id: Math.random().toString(36).substr(2, 9),
-      email,
-      password,
-      role: email === 'admin@ff.com' ? UserRole.ADMIN : UserRole.USER,
-      createdAt: Date.now(),
-    };
-
-    setState(prev => ({
-      ...prev,
-      users: [...prev.users, newUser],
-      currentUser: newUser,
-    }));
-    showToast('Registrasi berhasil!');
-  };
-
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    const user = state.users.find(u => u.email === email && u.password === password);
-    if (user) {
-      setState(prev => ({ ...prev, currentUser: user }));
+  const handleGoogleAuth = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
       showToast('Login berhasil!');
-    } else {
-      showToast('Email atau password salah', 'error');
+    } catch (error) {
+      console.error(error);
+      showToast('Autentikasi Gagal', 'error');
     }
   };
 
-  const handleLogout = () => {
-    clearSession();
-    setState(prev => ({ ...prev, currentUser: null }));
-    showToast('Berhasil logout');
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      showToast('Berhasil logout');
+    } catch (error) {
+      showToast('Logout Gagal', 'error');
+    }
   };
 
-  const submitReport = (e: React.FormEvent) => {
+  const submitReport = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!ffId || !reason) return;
+    if (!ffId || !reason || !currentUser) return;
 
-    const newReport: Report = {
-      id: Math.random().toString(36).substr(2, 9),
-      userId: state.currentUser!.id,
-      userEmail: state.currentUser!.email,
-      ffId,
-      reason,
-      status: ReportStatus.PENDING,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
+    try {
+      const newReport: Omit<Report, 'id'> = {
+        userId: currentUser.id,
+        userEmail: currentUser.email,
+        ffId,
+        reason,
+        status: ReportStatus.PENDING,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
 
-    setState(prev => ({
-      ...prev,
-      reports: [newReport, ...prev.reports],
-    }));
-    setFfId('');
-    setReason('');
-    showToast('Laporan terkirim ke Admin!');
+      await addDoc(collection(db, 'reports'), newReport);
+      setFfId('');
+      setReason('');
+      showToast('Laporan terkirim ke Admin!');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'reports');
+    }
   };
 
-  const updateReportStatus = (id: string, updates: Partial<Report>) => {
-    setState(prev => ({
-      ...prev,
-      reports: prev.reports.map(r => r.id === id ? { ...r, ...updates, updatedAt: Date.now() } : r)
-    }));
+  const updateReportStatus = async (id: string, updates: Partial<Report>) => {
+    try {
+      const reportRef = doc(db, 'reports', id);
+      await updateDoc(reportRef, { ...updates, updatedAt: Date.now() });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `reports/${id}`);
+    }
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, reportId: string) => {
@@ -158,9 +270,9 @@ export default function App() {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onloadend = () => {
+    reader.onloadend = async () => {
       const base64String = reader.result as string;
-      updateReportStatus(reportId, { 
+      await updateReportStatus(reportId, { 
         screenshotUrl: base64String, 
         message: 'Admin telah mengirim screenshot akun. Silakan konfirmasi.' 
       });
@@ -170,8 +282,16 @@ export default function App() {
   };
 
   const activeReport = useMemo(() => 
-    state.reports.find(r => r.id === activeReportId), 
-  [state.reports, activeReportId]);
+    reports.find(r => r.id === activeReportId), 
+  [reports, activeReportId]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <Loader2 className="animate-spin text-orange-500" size={32} />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900 selection:bg-orange-100 flex flex-col items-center p-0 md:p-4">
@@ -186,7 +306,7 @@ export default function App() {
             </div>
             <h1 className="font-bold text-xl tracking-tight">FF Guard</h1>
           </div>
-          {state.currentUser && (
+          {currentUser && (
             <button 
               onClick={handleLogout}
               className="p-2 text-slate-400 hover:text-red-500 transition-colors"
@@ -199,88 +319,40 @@ export default function App() {
         <main className="flex-1 overflow-y-auto px-6 pb-12">
           <AnimatePresence mode="wait">
             
-            {/* View: Auth */}
+          {/* View: Auth */}
             {view === 'auth' && (
               <motion.div
                 key="auth-view"
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 20 }}
-                className="space-y-8 pt-6"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 1.05 }}
+                className="flex flex-col items-center justify-center min-h-[600px] text-center space-y-8"
               >
+                <div className="w-20 h-20 bg-orange-100 rounded-[2.5rem] flex items-center justify-center text-orange-500 shadow-inner">
+                  <ShieldCheck size={40} />
+                </div>
+                
                 <div>
-                  <h2 className="text-3xl font-bold">{authMode === 'login' ? 'Selamat Datang' : 'Buat Akun Baru'}</h2>
-                  <p className="text-slate-500 mt-2">
-                    {authMode === 'login' ? 'Silakan login untuk memantau laporan Anda.' : 'Daftar sekarang untuk melaporkan akun yang hilang.'}
+                  <h2 className="text-3xl font-black italic uppercase tracking-tighter">FF Guard Pro</h2>
+                  <p className="text-slate-500 font-medium mt-2 max-w-[240px] leading-tight">
+                    Sistem pemulihan akun Free Fire profesional & terpercaya.
                   </p>
                 </div>
 
-                <form onSubmit={authMode === 'login' ? handleLogin : handleRegister} className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-semibold text-slate-700 ml-1">Email</label>
-                    <div className="relative">
-                      <Mail className="absolute left-3 top-3 text-slate-400" size={18} />
-                      <input 
-                        type="email" 
-                        required 
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        placeholder="user@example.com"
-                        className="w-full bg-slate-100 border-none rounded-2xl py-3 pl-11 pr-4 focus:ring-2 focus:ring-orange-500 outline-none transition-all"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-semibold text-slate-700 ml-1">Password</label>
-                    <div className="relative">
-                      <Key className="absolute left-3 top-3 text-slate-400" size={18} />
-                      <input 
-                        type="password" 
-                        required 
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder="••••••••"
-                        className="w-full bg-slate-100 border-none rounded-2xl py-3 pl-11 pr-4 focus:ring-2 focus:ring-orange-500 outline-none transition-all"
-                      />
-                    </div>
-                  </div>
-
-                  {authMode === 'register' && (
-                    <div className="space-y-2">
-                      <label className="text-sm font-semibold text-slate-700 ml-1">Konfirmasi Password</label>
-                      <div className="relative">
-                        <Key className="absolute left-3 top-3 text-slate-400" size={18} />
-                        <input 
-                          type="password" 
-                          required 
-                          value={confirmPassword}
-                          onChange={(e) => setConfirmPassword(e.target.value)}
-                          placeholder="••••••••"
-                          className="w-full bg-slate-100 border-none rounded-2xl py-3 pl-11 pr-4 focus:ring-2 focus:ring-orange-500 outline-none transition-all"
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  <button className="w-full bg-orange-500 text-white font-bold py-4 rounded-2xl shadow-lg shadow-orange-200 hover:bg-orange-600 active:scale-95 transition-all mt-4">
-                    {authMode === 'login' ? 'Masuk' : 'Daftar'}
-                  </button>
-                </form>
-
-                <div className="text-center">
+                <div className="w-full space-y-4">
                   <button 
-                    onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
-                    className="text-sm text-slate-500 hover:text-orange-500 font-medium transition-colors"
+                    onClick={handleGoogleAuth}
+                    className="w-full bg-slate-900 text-white font-black italic uppercase tracking-widest py-4 rounded-2xl shadow-xl flex items-center justify-center gap-3 hover:bg-slate-800 transition-all active:scale-95"
                   >
-                    {authMode === 'login' ? 'Belum punya akun? Daftar gratis' : 'Sudah punya akun? Login di sini'}
+                    <Chrome size={20} /> Masuk dangan Google
                   </button>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Powered by Secure Google Auth</p>
                 </div>
               </motion.div>
             )}
 
             {/* View: User Dashboard */}
-            {view === 'dashboard' && state.currentUser?.role === UserRole.USER && (
+            {view === 'dashboard' && currentUser?.role === UserRole.USER && (
               <motion.div
                 key="user-view"
                 initial={{ opacity: 0, y: 20 }}
@@ -292,8 +364,8 @@ export default function App() {
                   <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm text-orange-500">
                     <UserIcon size={24} />
                   </div>
-                  <div>
-                    <h3 className="font-bold">{state.currentUser.email}</h3>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-bold truncate">{currentUser.email}</h3>
                     <div className="flex items-center gap-1.5 text-orange-600 text-xs font-semibold uppercase tracking-wider">
                       <span className="w-1.5 h-1.5 bg-orange-500 rounded-full animate-pulse" />
                       Status: Veteran User
@@ -345,11 +417,11 @@ export default function App() {
                     Riwayat Laporan
                   </h4>
                   <div className="space-y-3">
-                    {state.reports.filter(r => r.userId === state.currentUser?.id).map((report) => (
+                    {reports.map((report) => (
                       <div key={report.id} className="p-4 border border-slate-100 rounded-3xl bg-white shadow-sm flex flex-col gap-3">
                         <div className="flex items-center justify-between">
-                          <span className="text-mono text-sm font-bold opacity-30 tracking-tight">#{report.id}</span>
-                          <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                          <span className="text-mono text-[10px] font-bold opacity-30 tracking-tight">#{report.id.slice(0, 8)}</span>
+                          <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
                             report.status === ReportStatus.PENDING ? 'bg-amber-100 text-amber-700' :
                             report.status === ReportStatus.PROSES ? 'bg-blue-100 text-blue-700' :
                             'bg-green-100 text-green-700'
@@ -493,7 +565,7 @@ export default function App() {
                       </div>
                     ))}
 
-                    {state.reports.filter(r => r.userId === state.currentUser?.id).length === 0 && (
+                    {reports.length === 0 && (
                       <div className="text-center py-12 px-6 bg-slate-50 border-2 border-dashed border-slate-200 rounded-3xl space-y-3">
                         <Loader2 className="mx-auto text-slate-300 animate-pulse" size={32} />
                         <p className="text-slate-400 text-sm font-medium italic">Belum ada laporan akun hilang.</p>
@@ -505,7 +577,7 @@ export default function App() {
             )}
 
             {/* View: Admin Dashboard */}
-            {view === 'dashboard' && state.currentUser?.role === UserRole.ADMIN && (
+            {view === 'dashboard' && currentUser?.role === UserRole.ADMIN && (
               <motion.div
                 key="admin-view"
                 initial={{ opacity: 0, y: 20 }}
@@ -524,7 +596,7 @@ export default function App() {
                         <h2 className="text-2xl font-bold italic leading-tight uppercase tracking-tight">Pending Approval</h2>
                         <div className="flex items-baseline gap-2 mt-4">
                           <span className="text-5xl font-black text-orange-400 tracking-tighter tabular-nums leading-none">
-                            {state.reports.filter(r => r.status !== ReportStatus.SELESAI).length}
+                            {reports.filter(r => r.status !== ReportStatus.SELESAI).length}
                           </span>
                           <span className="text-sm font-bold opacity-60 italic whitespace-nowrap">Active Laps</span>
                         </div>
@@ -537,7 +609,7 @@ export default function App() {
                     <div className="space-y-4">
                       <h4 className="font-bold text-slate-500 uppercase text-xs tracking-widest ml-1 font-mono tracking-tighter">Queue: ALL_RPTS</h4>
                       <div className="space-y-3">
-                        {state.reports.map(report => (
+                        {reports.map(report => (
                           <button 
                             key={report.id}
                             onClick={() => setActiveReportId(report.id)}
@@ -552,14 +624,20 @@ export default function App() {
                                   'bg-green-400'
                                 }`} />
                               </div>
-                              <p className="font-bold text-slate-800 italic leading-none">{report.userEmail}</p>
-                              <p className="text-[10px] text-slate-400 font-medium">#{report.id} • {new Date(report.createdAt).toLocaleDateString()}</p>
+                              <p className="font-bold text-slate-800 italic leading-none truncate max-w-[180px]">{report.userEmail}</p>
+                              <p className="text-[10px] text-slate-400 font-medium">#{report.id.slice(0, 8)} • {new Date(report.createdAt).toLocaleDateString()}</p>
                             </div>
                             <div className="w-10 h-10 rounded-2xl bg-slate-50 flex items-center justify-center group-hover:bg-orange-50 group-hover:text-orange-500 transition-colors">
                               <ChevronRight size={20} />
                             </div>
                           </button>
                         ))}
+
+                        {reports.length === 0 && (
+                          <div className="py-12 text-center text-slate-400 font-medium italic">
+                            No reports in queue.
+                          </div>
+                        )}
                       </div>
                     </div>
                   </>
@@ -723,23 +801,18 @@ export default function App() {
                                     <div className="grid grid-cols-2 gap-3 pt-2">
                                       <motion.button 
                                         whileTap={{ scale: 0.95 }}
-                                        onClick={() => {
-                                          const reporter = state.users.find(u => u.id === activeReport.userId);
+                                        onClick={async () => {
+                                          const reporter = allUsers.find(u => u.id === activeReport.userId);
                                           if (reporter) {
-                                            const updatedUsers = state.users.map(u => 
-                                              u.id === reporter.id ? { ...u, email: activeReport.newEmail! } : u
-                                            );
-                                            
-                                            updateReportStatus(activeReportId!, { 
+                                            // 1. Update Report Status
+                                            await updateReportStatus(activeReportId!, { 
                                               status: ReportStatus.SELESAI, 
                                               message: 'Akun sukses dipulihkan! Silakan login dengan email baru.' 
                                             });
-  
-                                            setState(prev => ({
-                                              ...prev,
-                                              users: updatedUsers,
-                                              currentUser: null
-                                            }));
+
+                                            // 2. Migrate User Email in Database
+                                            const userRef = doc(db, 'users', reporter.id);
+                                            await updateDoc(userRef, { email: activeReport.newEmail! });
   
                                             showToast('Proses Selesai! Akun Berhasil Dipulihkan.', 'success');
                                             setActiveReportId(null);

@@ -1,0 +1,92 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "ADMIN";
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Validation Blueprints
+    function isValidUser(data) {
+      return data.keys().hasAll(['id', 'email', 'role', 'createdAt']) && 
+             data.keys().size() == 4 &&
+             data.id is string && data.id.size() <= 64 &&
+             data.email is string && data.email.size() <= 128 &&
+             data.role in ['ADMIN', 'USER'] &&
+             data.createdAt is int;
+    }
+
+    function isValidReport(data) {
+      // Note: 'id' is often omitted in creation if using addDoc, 
+      // but we'll allow it anyway if present.
+      return data.keys().hasAll(['userId', 'userEmail', 'ffId', 'reason', 'status', 'createdAt', 'updatedAt']) &&
+             data.userId is string && data.userId.size() <= 64 &&
+             data.userEmail is string && data.userEmail.size() <= 128 &&
+             data.ffId is string && data.ffId.size() <= 64 &&
+             data.reason is string && data.reason.size() <= 1000 &&
+             data.status in ['PENDING', 'PROSES', 'SELESAI'] &&
+             data.createdAt is int &&
+             data.updatedAt is int;
+    }
+
+    // Collection Rules
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && request.auth.uid == userId && isValidUser(incoming());
+      allow update: if (isOwner(userId) && isValidUser(incoming()) && 
+                         incoming().diff(existing()).affectedKeys().hasOnly(['email', 'password']) &&
+                         incoming().role == existing().role) || 
+                      isAdmin();
+    }
+
+    match /reports/{reportId} {
+      allow get: if isAdmin() || (isSignedIn() && existing().userId == request.auth.uid);
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid && isValidReport(incoming());
+      
+      allow update: if (
+        (isAdmin() && isValidReport(incoming())) ||
+        (isSignedIn() && existing().userId == request.auth.uid && 
+         existing().status != "SELESAI" &&
+         isValidReport(incoming()) && 
+         incoming().userId == existing().userId && (
+          // Action: Confirm Screenshot
+          incoming().diff(existing()).affectedKeys().hasOnly(['isScreenshotConfirmed', 'message', 'screenshotUrl', 'updatedAt']) ||
+          // Action: Send Email Data
+          incoming().diff(existing()).affectedKeys().hasOnly(['oldEmail', 'newEmail', 'message', 'updatedAt']) ||
+          // Action: Enter Code
+          incoming().diff(existing()).affectedKeys().hasOnly(['userEnteredCode', 'message', 'updatedAt'])
+        ))
+      );
+    }
+  }
+}
