@@ -21,20 +21,15 @@
         "id": { "type": "string" },
         "userId": { "type": "string" },
         "userEmail": { "type": "string" },
-        "ffId": { "type": "string" },
-        "reason": { "type": "string" },
-        "status": { "type": "string", "enum": ["PENDING", "PROSES", "SELESAI"] },
+        "googleLama": { "type": "string" },
+        "status": { "type": "string", "enum": ["PENDING", "PROSES", "SELESAI", "GAGAL", "BATAL"] },
+        "recoveredPassword": { "type": "string" },
+        "userFeedback": { "type": "string", "enum": ["BERHASIL", "GAK_BISA"] },
         "createdAt": { "type": "number" },
         "updatedAt": { "type": "number" },
-        "screenshotUrl": { "type": "string" },
-        "isScreenshotConfirmed": { "type": "boolean" },
-        "message": { "type": "string" },
-        "oldEmail": { "type": "string" },
-        "newEmail": { "type": "string" },
-        "verificationCode": { "type": "string" },
-        "userEnteredCode": { "type": "string" }
+        "message": { "type": "string" }
       },
-      "required": ["id", "userId", "userEmail", "ffId", "reason", "status", "createdAt", "updatedAt"]
+      "required": ["id", "userId", "userEmail", "googleLama", "status", "createdAt", "updatedAt"]
     }
   },
   "firestore": {

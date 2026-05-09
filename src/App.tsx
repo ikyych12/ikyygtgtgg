@@ -123,8 +123,9 @@ export default function App() {
   const [activeReportId, setActiveReportId] = useState<string | null>(null);
 
   // Form states
-  const [ffId, setFfId] = useState('');
-  const [reason, setReason] = useState('');
+  const [googleLama, setGoogleLama] = useState('');
+  const [adminRecoveredEmail, setAdminRecoveredEmail] = useState('');
+  const [adminRecoveredPassword, setAdminRecoveredPassword] = useState('');
 
   // 1. Auth Observer
   useEffect(() => {
@@ -237,23 +238,22 @@ export default function App() {
 
   const submitReport = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!ffId || !reason || !currentUser) return;
+    if (!googleLama || !currentUser) return;
 
     try {
       const newReport: Omit<Report, 'id'> = {
         userId: currentUser.id,
         userEmail: currentUser.email,
-        ffId,
-        reason,
+        googleLama,
         status: ReportStatus.PENDING,
         createdAt: Date.now(),
         updatedAt: Date.now(),
+        message: 'Laporan telah diterima. Menunggu proses dari Gmail FF.'
       };
 
       await addDoc(collection(db, 'reports'), newReport);
-      setFfId('');
-      setReason('');
-      showToast('Laporan terkirim ke Admin!');
+      setGoogleLama('');
+      showToast('Laporan dikirim!');
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'reports');
     }
@@ -381,35 +381,26 @@ export default function App() {
                   <div className="flex items-center justify-between">
                     <h4 className="font-bold text-lg flex items-center gap-2">
                       <PlusCircle size={20} className="text-orange-500" />
-                      Laporkan Akun Hilang
+                      Pulihkan Akun Google
                     </h4>
                   </div>
                   
                   <form onSubmit={submitReport} className="bg-slate-100 p-6 rounded-3xl space-y-4">
                     <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase ml-1">ID Free Fire</label>
+                      <label className="text-xs font-bold text-slate-500 uppercase ml-1">Google Email / ID Lama</label>
                       <input 
                         required
-                        placeholder="Contoh: 12345678"
-                        value={ffId}
-                        onChange={(e) => setFfId(e.target.value)}
-                        className="w-full bg-white border-none rounded-2xl py-3 px-4 focus:ring-2 focus:ring-orange-500 outline-none transition-all placeholder:text-slate-300 font-mono"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase ml-1">Alasan Kehilangan</label>
-                      <textarea 
-                        required
-                        placeholder="Ceritakan bagaimana akun Anda hilang..."
-                        value={reason}
-                        onChange={(e) => setReason(e.target.value)}
-                        className="w-full bg-white border-none rounded-2xl py-3 px-4 focus:ring-2 focus:ring-orange-500 outline-none transition-all placeholder:text-slate-300 min-h-[100px] resize-none"
+                        placeholder="Contoh: user@gmail.com"
+                        value={googleLama}
+                        onChange={(e) => setGoogleLama(e.target.value)}
+                        className="w-full bg-white border-none rounded-2xl py-3 px-4 focus:ring-2 focus:ring-orange-500 outline-none transition-all placeholder:text-slate-300"
                       />
                     </div>
                     <button className="w-full bg-slate-900 text-white font-bold py-3 px-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-800 transition-all">
                       <Send size={18} />
-                      Kirim Laporan
+                      Pulihkan Sekarang
                     </button>
+                    <p className="text-[10px] text-center text-slate-400 font-bold uppercase tracking-widest leading-tight">Proses akan dikerjakan oleh tim Gmail FF</p>
                   </form>
                 </div>
 
@@ -434,135 +425,90 @@ export default function App() {
                         </div>
                         <div className="flex items-center justify-between">
                           <div>
-                            <p className="text-xs text-slate-400 font-medium tracking-tighter uppercase mb-0.5">ID Akun</p>
-                            <p className="font-bold text-slate-700 text-lg leading-none">{report.ffId}</p>
+                            <p className="text-xs text-slate-400 font-medium tracking-tighter uppercase mb-0.5">Google Lama</p>
+                            <p className="font-bold text-slate-700 text-base leading-none">{report.googleLama}</p>
                           </div>
                           <div className="text-right">
-                            <p className="text-xs text-slate-400 font-medium tracking-tight whitespace-nowrap">Dibuat pada</p>
+                            <p className="text-xs text-slate-400 font-medium tracking-tight whitespace-nowrap">Tanggal</p>
                             <p className="text-xs font-bold text-slate-500">{new Date(report.createdAt).toLocaleDateString()}</p>
                           </div>
                         </div>
 
-                        <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
-                          <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Alasan</p>
-                          <p className="text-xs text-slate-600 line-clamp-2 italic">"{report.reason}"</p>
+                        <div className={`p-4 rounded-2xl border ${
+                          report.status === ReportStatus.SELESAI ? 'bg-green-50 border-green-100' : 
+                          report.status === ReportStatus.GAGAL ? 'bg-red-50 border-red-100' : 'bg-slate-50 border-slate-100'
+                        }`}>
+                          <p className="text-[10px] font-black uppercase text-slate-400 mb-1 tracking-widest">Pesan Gmail FF:</p>
+                          <p className="text-xs text-slate-700 font-bold italic leading-relaxed">
+                            {report.message}
+                          </p>
+                          {report.recoveredPassword && report.status === ReportStatus.SELESAI && (
+                            <div className="mt-2 pt-2 border-t border-green-200">
+                               <p className="text-[10px] font-black uppercase text-green-600 mb-1 tracking-widest">Password Berhasil Dipulihkan:</p>
+                               <div className="bg-white p-2 rounded-lg border border-green-200 font-mono text-center text-sm font-black text-slate-900 tracking-widest">
+                                 {report.recoveredPassword}
+                               </div>
+                            </div>
+                          )}
                         </div>
 
-                        {/* Interactive parts for user when processing */}
-                        {report.status === ReportStatus.PROSES && (
-                          <div className="mt-2 p-4 bg-blue-50 border border-blue-100 rounded-2xl space-y-3">
-                            <p className="text-xs text-blue-800 font-medium italic">✨ {report.message || 'Admin sedang memproses akun Anda.'}</p>
-                            
-                            {/* Step 1: Confirm Screenshot */}
-                            {report.screenshotUrl && !report.isScreenshotConfirmed && (
-                              <div className="space-y-3">
-                                <div className="w-full aspect-video bg-slate-900 rounded-xl flex items-center justify-center border-2 border-dashed border-blue-200 relative overflow-hidden group">
-                                  <img 
-                                    src={report.screenshotUrl} 
-                                    alt="Bukti Akun" 
-                                    className="w-full h-full object-contain"
-                                    referrerPolicy="no-referrer"
-                                  />
-                                  <div className="absolute top-2 right-2 bg-blue-500 text-white p-1 rounded-lg shadow-lg">
-                                    <CheckCircle2 size={14} />
-                                  </div>
-                                </div>
-                                <div className="flex gap-2">
-                                  <button 
-                                    onClick={() => updateReportStatus(report.id, { isScreenshotConfirmed: true, message: 'Screenshot dikonfirmasi. Kirim data email Anda.' })}
-                                    className="flex-1 py-2.5 bg-green-500 text-white rounded-xl text-xs font-black uppercase italic shadow-sm"
-                                  >
-                                    Ya, Benar
-                                  </button>
-                                  <button 
-                                    onClick={() => updateReportStatus(report.id, { screenshotUrl: undefined, message: 'User menyatakan screenshot salah. Admin sedang mengecek ulang.' })}
-                                    className="flex-1 py-2.5 bg-white text-red-500 rounded-xl text-xs font-black border border-red-500/20 uppercase italic"
-                                  >
-                                    Salah
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Step 2: Email Data */}
-                            {report.isScreenshotConfirmed && !report.oldEmail && (
-                              <div className="space-y-2 pt-2 border-t border-blue-200/50">
-                                <p className="text-[10px] font-black uppercase text-blue-500 tracking-widest italic mb-2">Input Data Email Pemulihan</p>
-                                <input 
-                                  id={`old-email-input-${report.id}`}
-                                  placeholder="Masukkan Email Lama" 
-                                  className="w-full bg-white border border-blue-200 rounded-xl px-4 py-2.5 text-xs font-bold outline-none ring-offset-2 focus:ring-2 focus:ring-blue-500"
-                                />
-                                <input 
-                                  id={`new-email-input-${report.id}`}
-                                  placeholder="Masukkan Email Baru" 
-                                  className="w-full bg-white border border-blue-200 rounded-xl px-4 py-2.5 text-xs font-bold outline-none ring-offset-2 focus:ring-2 focus:ring-blue-500"
-                                />
+                        {/* Interactive parts for user when processing or finished */}
+                        {report.status === ReportStatus.SELESAI && !report.userFeedback && (
+                          <div className="space-y-3">
+                             <p className="text-[10px] text-center font-black uppercase text-slate-400 tracking-widest italic">Apakah Pemulihan Berhasil?</p>
+                             <div className="flex gap-2">
                                 <button 
-                                  onClick={() => {
-                                    const oldE = (document.getElementById(`old-email-input-${report.id}`) as HTMLInputElement).value;
-                                    const newE = (document.getElementById(`new-email-input-${report.id}`) as HTMLInputElement).value;
-                                    if (oldE && newE) {
-                                      updateReportStatus(report.id, { oldEmail: oldE, newEmail: newE, message: 'Data email terkirim. Menunggu kode verifikasi.' });
-                                      showToast('Email Terkirim!');
-                                    }
-                                  }}
-                                  className="w-full bg-blue-600 text-white py-3 rounded-xl text-xs font-black uppercase italic tracking-widest mt-1"
+                                  onClick={() => updateReportStatus(report.id, { userFeedback: 'BERHASIL' })}
+                                  className="flex-1 py-3 bg-green-500 text-white rounded-xl text-xs font-black uppercase italic shadow-sm hover:bg-green-600 transition-all"
                                 >
-                                  Kirim Data Email
+                                  Berhasil
                                 </button>
-                              </div>
-                            )}
-
-                            {/* Step 3: Verification Code */}
-                            {report.verificationCode && !report.userEnteredCode && (
-                              <div className="space-y-2 pt-2 border-t border-blue-200/50">
-                                <div className="flex items-center gap-2 mb-2">
-                                  <div className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-ping" />
-                                  <p className="text-[10px] font-black uppercase text-orange-600 tracking-widest italic">Kirim Kode Verifikasi</p>
-                                </div>
-                                <p className="text-[10px] text-blue-700 font-bold italic">
-                                  Cek email baru Anda untuk mendapatkan kode 8-digit.
-                                </p>
-                                <div className="flex gap-2">
-                                  <input 
-                                    placeholder="Enter 8-Digit Code" 
-                                    className="flex-1 bg-white border border-blue-200 rounded-xl px-4 py-2.5 text-sm font-black outline-none font-mono focus:ring-2 focus:ring-blue-500"
-                                    id={`verif-code-input-${report.id}`}
-                                    maxLength={8}
-                                  />
-                                  <button 
-                                    onClick={() => {
-                                      const input = document.getElementById(`verif-code-input-${report.id}`) as HTMLInputElement;
-                                      if (input.value.length === 8) {
-                                        updateReportStatus(report.id, { userEnteredCode: input.value, message: 'Kode sedang diverifikasi oleh Admin.' });
-                                        showToast('Kode Sent!');
-                                      } else {
-                                        showToast('Kode harus 8 digit!', 'error');
-                                      }
-                                    }}
-                                    className="bg-blue-600 text-white px-6 rounded-xl text-xs font-black uppercase italic"
-                                  >
-                                    Send
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Final wait */}
-                            {report.userEnteredCode && report.status === ReportStatus.PROSES && (
-                              <div className="p-4 bg-white/50 text-blue-700 rounded-xl flex items-center justify-center gap-3 border border-blue-200/50">
-                                <Loader2 size={16} className="animate-spin text-blue-500" />
-                                <span className="text-[10px] font-black italic tracking-widest uppercase">Admin: Final Verification...</span>
-                              </div>
-                            )}
+                                <button 
+                                  onClick={() => updateReportStatus(report.id, { userFeedback: 'GAK_BISA', status: ReportStatus.GAGAL, message: 'User melaporkan pemulihan tidak berhasil.' })}
+                                  className="flex-1 py-3 bg-white text-red-500 rounded-xl text-xs font-black border border-red-500/20 uppercase italic hover:bg-red-50 transition-all"
+                                >
+                                  Gak Bisa
+                                </button>
+                             </div>
                           </div>
                         )}
 
-                        {report.status === ReportStatus.SELESAI && (
-                          <div className="mt-2 p-4 bg-green-50 border border-green-100 rounded-2xl">
-                             <p className="text-xs text-green-800 font-bold tracking-tight">Akun Anda sudah selesai dipulihkan! Silakan login ulang dengan email baru.</p>
+                        {report.userFeedback && (
+                          <div className={`p-4 rounded-2xl flex items-center justify-center gap-2 ${
+                            report.userFeedback === 'BERHASIL' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                          }`}>
+                            {report.userFeedback === 'BERHASIL' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+                            <span className="text-[10px] font-black uppercase italic tracking-widest">
+                              Konfirmasi User: {report.userFeedback.replace('_', ' ')}
+                            </span>
                           </div>
+                        )}
+
+                        {report.status === ReportStatus.PENDING && (
+                           <div className="space-y-3">
+                              <div className="flex items-center gap-2 justify-center py-2">
+                                 <Loader2 size={14} className="animate-spin text-orange-400" />
+                                 <p className="text-[10px] font-black uppercase text-orange-400 tracking-widest italic">Menunggu Antrian Admin...</p>
+                              </div>
+                              <button 
+                                onClick={() => {
+                                  if (confirm('Batalkan laporan ini?')) {
+                                    updateReportStatus(report.id, { status: ReportStatus.BATAL, message: 'Laporan dibatalkan oleh Anda.' });
+                                    showToast('Laporan Dibatalkan');
+                                  }
+                                }}
+                                className="w-full py-3 border-2 border-slate-100 text-slate-400 rounded-2xl text-[10px] font-black uppercase italic hover:bg-slate-50 transition-all"
+                              >
+                                ❌ Batalkan Laporan
+                              </button>
+                           </div>
+                        )}
+                        
+                        {report.status === ReportStatus.BATAL && (
+                           <div className="p-4 bg-slate-100 rounded-2xl flex items-center justify-center gap-2">
+                              <LogOut size={16} className="text-slate-400 rotate-90" />
+                              <span className="text-[10px] font-black uppercase italic text-slate-500 tracking-widest">Laporan Dibatalkan</span>
+                           </div>
                         )}
                       </div>
                     ))}
@@ -619,11 +565,12 @@ export default function App() {
                           >
                             <div className="flex flex-col gap-1">
                               <div className="flex items-center gap-2">
-                                <span className="font-mono text-[10px] font-black tracking-widest uppercase py-1 px-2 border rounded-md bg-slate-50 text-slate-400">ID {report.ffId}</span>
+                                <span className="font-mono text-[10px] font-black tracking-widest uppercase py-1 px-2 border rounded-md bg-slate-50 text-slate-400">ACC: {report.googleLama}</span>
                                 <span className={`w-1.5 h-1.5 rounded-full ${
                                   report.status === ReportStatus.PENDING ? 'bg-amber-400' :
                                   report.status === ReportStatus.PROSES ? 'bg-blue-400' :
-                                  'bg-green-400'
+                                  report.status === ReportStatus.SELESAI ? 'bg-green-400' :
+                                  'bg-red-400'
                                 }`} />
                               </div>
                               <p className="font-bold text-slate-800 italic leading-none truncate max-w-[180px]">{report.userEmail}</p>
@@ -657,13 +604,14 @@ export default function App() {
                     <div className="bg-white border rounded-[2rem] overflow-hidden shadow-sm">
                       <div className="p-6 bg-slate-50 border-b flex justify-between items-center">
                         <div>
-                          <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">Processing Case</p>
-                          <h3 className="text-lg font-black italic uppercase tracking-tighter">FF_ACC: {activeReport?.ffId}</h3>
+                          <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">Process Recovery</p>
+                          <h3 className="text-lg font-black italic uppercase tracking-tighter">ACC: {activeReport?.googleLama}</h3>
                         </div>
                         <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${
                           activeReport?.status === ReportStatus.PENDING ? 'bg-amber-100 text-amber-700' :
                           activeReport?.status === ReportStatus.PROSES ? 'bg-blue-100 text-blue-700' :
-                          'bg-green-100 text-green-700'
+                          activeReport?.status === ReportStatus.SELESAI ? 'bg-green-100 text-green-700' :
+                          'bg-red-100 text-red-700'
                         }`}>
                           {activeReport?.status}
                         </span>
@@ -681,185 +629,110 @@ export default function App() {
                             <p className="text-[10px] font-bold text-slate-400 uppercase">Case ID</p>
                             <p className="text-xs font-black">#{activeReport?.id}</p>
                           </div>
-                        </div>
-
-                        <div className="p-4 bg-slate-50 rounded-2xl border">
-                          <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Alasan dari User</p>
-                          <p className="text-xs italic text-slate-600 font-medium">"{activeReport?.reason}"</p>
+                        </div>                        <div className="p-4 bg-slate-50 rounded-2xl border">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Google Lama Pelapor</p>
+                          <p className="text-xs italic text-slate-600 font-bold">{activeReport?.googleLama}</p>
                         </div>
 
                         <div className="space-y-4 pt-4 border-t border-dashed">
-                          {/* Step 1: Start Process */}
-                          {activeReport?.status === ReportStatus.PENDING && (
-                            <button 
-                              onClick={() => updateReportStatus(activeReportId!, { status: ReportStatus.PROSES, message: 'Admin sedang mencari data akun Anda.' })}
-                              className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black italic uppercase tracking-widest hover:bg-blue-700 active:scale-95 transition-all outline-none"
-                            >
-                              🚀 Start Process
-                            </button>
+                          {/* Active Process */}
+                          {(activeReport?.status === ReportStatus.PENDING || activeReport?.status === ReportStatus.PROSES) && (
+                            <div className="space-y-4">
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1">Gmail FF Result (Email)</label>
+                                <input 
+                                  value={adminRecoveredEmail}
+                                  onChange={(e) => setAdminRecoveredEmail(e.target.value)}
+                                  placeholder="Email yang berhasil dipulihkan"
+                                  className="w-full bg-slate-100 border-none rounded-xl py-3 px-4 focus:ring-2 focus:ring-orange-500 outline-none transition-all text-sm font-bold"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1">Password Result</label>
+                                <input 
+                                  value={adminRecoveredPassword}
+                                  onChange={(e) => setAdminRecoveredPassword(e.target.value)}
+                                  placeholder="Password baru/hasil"
+                                  className="w-full bg-slate-100 border-none rounded-xl py-3 px-4 focus:ring-2 focus:ring-orange-500 outline-none transition-all text-sm font-bold font-mono"
+                                />
+                              </div>
+                              <div className="grid grid-cols-1 gap-4">
+                                <button 
+                                  onClick={async () => {
+                                    if (!adminRecoveredEmail || !adminRecoveredPassword) {
+                                      showToast('Isi semua data hasil!', 'error');
+                                      return;
+                                    }
+                                    await updateReportStatus(activeReportId!, { 
+                                      status: ReportStatus.SELESAI,
+                                      recoveredPassword: adminRecoveredPassword,
+                                      message: `Gmail FF: Akun ${adminRecoveredEmail} telah berhasil dipulihkan dengan password berikut. Silakan cek dan klik BERHASIL jika sudah masuk.`
+                                    });
+                                    setAdminRecoveredEmail('');
+                                    setAdminRecoveredPassword('');
+                                    showToast('Data pemulihan dikirim ke user!');
+                                    setActiveReportId(null);
+                                  }}
+                                  className="w-full py-4 bg-orange-500 text-white rounded-2xl font-black italic uppercase tracking-widest hover:bg-orange-600 active:scale-95 transition-all shadow-lg shadow-orange-100"
+                                >
+                                  ✅ Kirim Hasil Pemulihan
+                                </button>
+                                <button 
+                                  onClick={async () => {
+                                    const reason = prompt("Alasan Gagal?");
+                                    if (!reason) return;
+                                    await updateReportStatus(activeReportId!, { 
+                                      status: ReportStatus.GAGAL,
+                                      message: `Gmail FF: Mohon maaf, pemulihan gagal. Alasan: ${reason}`
+                                    });
+                                    showToast('Status: GAGAL', 'error');
+                                    setActiveReportId(null);
+                                  }}
+                                  className="w-full py-3 text-red-500 font-bold uppercase italic text-xs tracking-widest hover:bg-red-50 rounded-xl transition-all"
+                                >
+                                  ❌ Tandai Gagal
+                                </button>
+                                <button 
+                                  onClick={async () => {
+                                    const reason = "ID / Email Google Tidak Valid atau tidak ditemukan dalam sistem.";
+                                    await updateReportStatus(activeReportId!, { 
+                                      status: ReportStatus.GAGAL,
+                                      message: `Gmail FF: Mohon maaf, pemulihan gagal. Alasan: ${reason}`
+                                    });
+                                    showToast('Gagal: Akun Tidak Valid', 'error');
+                                    setActiveReportId(null);
+                                  }}
+                                  className="w-full py-2 text-slate-400 font-bold uppercase italic text-[10px] tracking-widest hover:bg-slate-50 rounded-xl transition-all"
+                                >
+                                  ⚠️ Akun Tidak Valid
+                                </button>
+                              </div>
+                            </div>
                           )}
 
-                          {/* Step 2: Processing Steps */}
-                          {activeReport?.status === ReportStatus.PROSES && (
-                            <div className="space-y-6">
-                              
-                              {/* Action: Send Screenshot */}
-                              {!activeReport.screenshotUrl && (
-                                <div className="w-full">
-                                  <input 
-                                    type="file" 
-                                    accept="image/*" 
-                                    id="admin-ss-upload" 
-                                    className="hidden" 
-                                    onChange={(e) => handleFileUpload(e, activeReportId!)}
-                                  />
-                                  <label 
-                                    htmlFor="admin-ss-upload"
-                                    className="w-full py-4 bg-orange-500 text-white rounded-2xl font-black italic uppercase tracking-widest flex items-center justify-center gap-2 cursor-pointer hover:bg-orange-600 transition-all active:scale-95 shadow-lg shadow-orange-100"
-                                  >
-                                    <Upload size={20} /> Ambil Dari Galeri
-                                  </label>
-                                </div>
-                              )}
+                          {activeReport?.status === ReportStatus.SELESAI && (
+                            <div className="p-6 bg-green-50 border border-green-200 rounded-[2rem] text-center space-y-2">
+                               <CheckCircle2 className="mx-auto text-green-600 mb-2" size={32} />
+                               <h5 className="font-black italic uppercase tracking-widest text-green-700">Closed Case</h5>
+                               <p className="text-xs text-green-600 font-bold opacity-80">User Feedback: {activeReport.userFeedback || 'No feedback yet'}</p>
+                            </div>
+                          )}
 
-                              {/* Wait: User Confirmation */}
-                              {activeReport.screenshotUrl && !activeReport.isScreenshotConfirmed && (
-                                <div className="p-5 bg-amber-50 border border-amber-200 rounded-[2rem] text-center space-y-3">
-                                  <Loader2 size={24} className="animate-spin mx-auto text-amber-500" />
-                                  <p className="text-[10px] font-black italic uppercase text-amber-600 tracking-[0.1em]">Menunggu User Konfirmasi Screenshot...</p>
-                                </div>
-                              )}
-
-                              {/* Action: Request Emails */}
-                              {activeReport.isScreenshotConfirmed && !activeReport.oldEmail && (
-                                <button 
-                                  onClick={() => updateReportStatus(activeReportId!, { message: 'Screenshot dikonfirmasi. Kirimkan email lama dan email baru Anda.' })}
-                                  className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black italic uppercase tracking-widest"
-                                >
-                                  Minta Email Lama & Baru
-                                </button>
-                              )}
-
-                              {/* Action: Send Verif Code */}
-                              {activeReport.oldEmail && !activeReport.verificationCode && (
-                                <div className="space-y-4 p-6 bg-slate-900 text-white rounded-[2rem] shadow-lg">
-                                  <div className="flex items-center gap-2 opacity-50 mb-2">
-                                    <ShieldCheck size={14} />
-                                    <span className="text-[10px] font-black uppercase tracking-[0.2em]">Credential Management</span>
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-4">
-                                    <div className="p-3 bg-white/10 rounded-xl border border-white/10">
-                                      <p className="text-[10px] font-bold opacity-50 uppercase mb-1">Old Email</p>
-                                      <p className="text-xs font-bold truncate leading-none">{activeReport.oldEmail}</p>
-                                    </div>
-                                    <div className="p-3 bg-white/10 rounded-xl border border-white/10">
-                                      <p className="text-[10px] font-bold opacity-50 uppercase mb-1">New Email</p>
-                                      <p className="text-xs font-bold truncate leading-none">{activeReport.newEmail}</p>
-                                    </div>
-                                  </div>
-                                  <button 
-                                    onClick={() => updateReportStatus(activeReportId!, { 
-                                      verificationCode: Math.floor(10000000 + Math.random() * 90000000).toString(),
-                                      message: 'Kode verifikasi telah dikirim ke email baru.'
-                                    })}
-                                    className="w-full bg-orange-500 text-white py-4 rounded-xl font-black italic uppercase tracking-widest mt-2"
-                                  >
-                                    Kirim Kode ke Email Baru
-                                  </button>
-                                </div>
-                              )}
-
-                              {/* Action: Check Code & Finalize */}
-                              {activeReport.verificationCode && (
-                                <div className="p-6 bg-slate-900 text-white rounded-[2rem] space-y-4 shadow-lg border border-white/5">
-                                  <div className="flex items-center justify-between">
-                                     <div className="flex items-center gap-2">
-                                       <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-                                       <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80 italic">Status Verifikasi User</span>
-                                     </div>
-                                     <span className="font-mono text-[10px] bg-white/10 px-2 py-1 rounded border border-white/10 opacity-50">CODE: {activeReport.verificationCode}</span>
-                                  </div>
-                                  
-                                  <div className="space-y-3">
-                                    <p className="text-[10px] font-black uppercase text-slate-500 tracking-widest italic ml-1">Input Dari User</p>
-                                    
-                                    <div className="p-4 bg-white/5 rounded-2xl border border-white/10 flex items-center justify-between">
-                                      <div className="flex flex-col gap-0.5">
-                                         <p className="text-[10px] font-bold text-slate-500 uppercase">Input User:</p>
-                                         <p className="font-mono text-xl font-black tracking-[0.2em] text-blue-400">
-                                           {activeReport.userEnteredCode || '--------'}
-                                         </p>
-                                      </div>
-                                      
-                                      {!activeReport.userEnteredCode && (
-                                        <div className="bg-white/5 text-white/40 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-tighter animate-pulse">
-                                          Menunggu
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  {activeReport.userEnteredCode && (
-                                    <div className="grid grid-cols-2 gap-3 pt-2">
-                                      <motion.button 
-                                        whileTap={{ scale: 0.95 }}
-                                        onClick={async () => {
-                                          const reporter = allUsers.find(u => u.id === activeReport.userId);
-                                          if (reporter) {
-                                            // 1. Update Report Status
-                                            await updateReportStatus(activeReportId!, { 
-                                              status: ReportStatus.SELESAI, 
-                                              message: 'Akun sukses dipulihkan! Silakan login dengan email baru.' 
-                                            });
-
-                                            // 2. Migrate User Email in Database
-                                            const userRef = doc(db, 'users', reporter.id);
-                                            await updateDoc(userRef, { email: activeReport.newEmail! });
-  
-                                            showToast('Proses Selesai! Akun Berhasil Dipulihkan.', 'success');
-                                            setActiveReportId(null);
-                                          }
-                                        }}
-                                        className="bg-green-500 text-slate-900 font-black italic uppercase tracking-widest py-3 px-4 rounded-xl flex items-center justify-center gap-2"
-                                      >
-                                        <CheckCircle2 size={16} /> Berhasil
-                                      </motion.button>
-
-                                      <motion.button 
-                                        whileTap={{ scale: 0.95 }}
-                                        onClick={() => {
-                                          updateReportStatus(activeReportId!, { 
-                                            userEnteredCode: undefined,
-                                            message: 'Kode yang Anda masukkan salah. Silakan kirim ulang kode yang benar.' 
-                                          });
-                                          showToast('Status: Kode Salah!', 'error');
-                                        }}
-                                        className="bg-red-500 text-white font-black italic uppercase tracking-widest py-3 px-4 rounded-xl flex items-center justify-center gap-2"
-                                      >
-                                        <LogOut size={16} className="-rotate-90" /> Salah
-                                      </motion.button>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
+                          {activeReport?.status === ReportStatus.GAGAL && (
+                            <div className="p-6 bg-red-50 border border-red-200 rounded-[2rem] text-center space-y-2">
+                               <AlertCircle className="mx-auto text-red-600 mb-2" size={32} />
+                               <h5 className="font-black italic uppercase tracking-widest text-red-700">Failed Case</h5>
+                               <p className="text-xs text-red-600 font-bold opacity-80">{activeReport.message}</p>
                             </div>
                           )}
                         </div>
-
-                        {activeReport?.status === ReportStatus.SELESAI && (
-                          <div className="p-6 bg-green-50 border border-green-200 rounded-[2rem] text-center space-y-2">
-                             <CheckCircle2 className="mx-auto text-green-600 mb-2" size={32} />
-                             <h5 className="font-black italic uppercase tracking-widest text-green-700">Closed Case</h5>
-                             <p className="text-xs text-green-600 font-bold opacity-80">This account was successfully migrated.</p>
-                          </div>
-                        )}
-                        </div>
                       </div>
-                    </motion.div>
-                  )}
-                </motion.div>
-              )}
-            </AnimatePresence>
+                    </div>
+                  </motion.div>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </main>
         
         {/* Navigation / Status Bar simulation for extra mobile feel */}

@@ -36,7 +36,6 @@ service cloud.firestore {
     // Validation Blueprints
     function isValidUser(data) {
       return data.keys().hasAll(['id', 'email', 'role', 'createdAt']) && 
-             data.keys().size() == 4 &&
              data.id is string && data.id.size() <= 64 &&
              data.email is string && data.email.size() <= 128 &&
              data.role in ['ADMIN', 'USER'] &&
@@ -44,16 +43,17 @@ service cloud.firestore {
     }
 
     function isValidReport(data) {
-      // Note: 'id' is often omitted in creation if using addDoc, 
-      // but we'll allow it anyway if present.
-      return data.keys().hasAll(['userId', 'userEmail', 'ffId', 'reason', 'status', 'createdAt', 'updatedAt']) &&
-             data.userId is string && data.userId.size() <= 64 &&
-             data.userEmail is string && data.userEmail.size() <= 128 &&
-             data.ffId is string && data.ffId.size() <= 64 &&
-             data.reason is string && data.reason.size() <= 1000 &&
-             data.status in ['PENDING', 'PROSES', 'SELESAI'] &&
-             data.createdAt is int &&
-             data.updatedAt is int;
+      return data.keys().hasAll(['userId', 'userEmail', 'status', 'createdAt', 'updatedAt']) &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.userEmail is string && data.userEmail.size() <= 256 &&
+             data.status in ['PENDING', 'PROSES', 'SELESAI', 'GAGAL', 'BATAL'] &&
+             data.createdAt is number &&
+             data.updatedAt is number &&
+             (!('googleLama' in data) || (data.googleLama is string && data.googleLama.size() <= 256)) &&
+             (!('ffId' in data) || (data.ffId is string && data.ffId.size() <= 256)) &&
+             (!('message' in data) || (data.message is string && data.message.size() <= 2000)) &&
+             (!('recoveredPassword' in data) || (data.recoveredPassword is string && data.recoveredPassword.size() <= 256)) &&
+             (!('userFeedback' in data) || data.userFeedback in ['BERHASIL', 'GAK_BISA']);
     }
 
     // Collection Rules
@@ -62,9 +62,9 @@ service cloud.firestore {
       allow list: if isAdmin();
       allow create: if isSignedIn() && request.auth.uid == userId && isValidUser(incoming());
       allow update: if (isOwner(userId) && isValidUser(incoming()) && 
-                         incoming().diff(existing()).affectedKeys().hasOnly(['email', 'password']) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['email', 'password', 'updatedAt']) &&
                          incoming().role == existing().role) || 
-                      isAdmin();
+                       isAdmin();
     }
 
     match /reports/{reportId} {
@@ -76,15 +76,10 @@ service cloud.firestore {
       allow update: if (
         (isAdmin() && isValidReport(incoming())) ||
         (isSignedIn() && existing().userId == request.auth.uid && 
-         existing().status != "SELESAI" &&
          isValidReport(incoming()) && 
          incoming().userId == existing().userId && (
-          // Action: Confirm Screenshot
-          incoming().diff(existing()).affectedKeys().hasOnly(['isScreenshotConfirmed', 'message', 'screenshotUrl', 'updatedAt']) ||
-          // Action: Send Email Data
-          incoming().diff(existing()).affectedKeys().hasOnly(['oldEmail', 'newEmail', 'message', 'updatedAt']) ||
-          // Action: Enter Code
-          incoming().diff(existing()).affectedKeys().hasOnly(['userEnteredCode', 'message', 'updatedAt'])
+          // Action: User Feedback / Cancel
+          incoming().diff(existing()).affectedKeys().hasOnly(['userFeedback', 'status', 'message', 'updatedAt'])
         ))
       );
     }

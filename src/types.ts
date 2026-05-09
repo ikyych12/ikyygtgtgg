@@ -12,6 +12,8 @@ export enum ReportStatus {
   PENDING = 'PENDING',
   PROSES = 'PROSES',
   SELESAI = 'SELESAI',
+  GAGAL = 'GAGAL',
+  BATAL = 'BATAL',
 }
 
 export interface User {
@@ -26,18 +28,18 @@ export interface Report {
   id: string;
   userId: string;
   userEmail: string;
-  ffId: string;
-  reason: string;
+  googleLama: string; // Changed from ffId
   status: ReportStatus;
-  screenshotUrl?: string; // Simulated URL
-  isScreenshotConfirmed?: boolean;
-  oldEmail?: string;
-  newEmail?: string;
-  verificationCode?: string;
-  userEnteredCode?: string;
+  recoveredPassword?: string;
+  userFeedback?: 'BERHASIL' | 'GAK_BISA';
   createdAt: number;
   updatedAt: number;
   message?: string;
+  // Kept for backward compatibility if needed, but not primarily used in the new flow
+  ffId?: string;
+  reason?: string;
+  screenshotUrl?: string;
+  isScreenshotConfirmed?: boolean;
 }
 
 export interface AppState {
