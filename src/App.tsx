@@ -519,8 +519,7 @@ export default function App() {
                                   <p className="text-[10px] font-black uppercase text-orange-600 tracking-widest italic">Kirim Kode Verifikasi</p>
                                 </div>
                                 <p className="text-[10px] text-blue-700 font-bold italic">
-                                  Cek email baru Anda untuk mendapatkan kode. 
-                                  <span className="text-slate-400"> (Simulasi: {report.verificationCode})</span>
+                                  Cek email baru Anda untuk mendapatkan kode 8-digit.
                                 </p>
                                 <div className="flex gap-2">
                                   <input 
