@@ -46,6 +46,8 @@ import {
   orderBy,
   updateDoc,
   addDoc,
+  limit,
+  getDocs,
   serverTimestamp,
   Timestamp,
   Firestore
@@ -124,6 +126,16 @@ export default function App() {
 
   // Form states
   const [googleLama, setGoogleLama] = useState('');
+  const [searchEmail, setSearchEmail] = useState('');
+  const [searchResult, setSearchResult] = useState<Report | null>(null);
+  const [isChecking, setIsChecking] = useState(false);
+  const [now, setNow] = useState(Date.now()); // State for real-time ticking
+
+  // Update clock every second
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
   const [adminRecoveredEmail, setAdminRecoveredEmail] = useState('');
   const [adminRecoveredPassword, setAdminRecoveredPassword] = useState('');
 
@@ -251,7 +263,23 @@ export default function App() {
         message: 'Laporan telah diterima. Menunggu proses dari Gmail FF.'
       };
 
-      await addDoc(collection(db, 'reports'), newReport);
+      const docRef = await addDoc(collection(db, 'reports'), newReport);
+      
+      // Notify Admin
+      try {
+        await fetch('/api/notify-admin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            reportId: docRef.id, 
+            userEmail: currentUser.email, 
+            googleLama 
+          })
+        });
+      } catch (e) {
+        console.warn('Notification failed', e);
+      }
+
       setGoogleLama('');
       showToast('Laporan dikirim!');
     } catch (error) {
@@ -262,7 +290,28 @@ export default function App() {
   const updateReportStatus = async (id: string, updates: Partial<Report>) => {
     try {
       const reportRef = doc(db, 'reports', id);
+      const existingSnap = await getDoc(reportRef);
+      const existingData = existingSnap.data() as Report;
+
       await updateDoc(reportRef, { ...updates, updatedAt: Date.now() });
+
+      // Notify User if status changed
+      if (updates.status && updates.status !== existingData.status) {
+        try {
+          await fetch('/api/notify-user-status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              userEmail: existingData.userEmail, 
+              googleLama: existingData.googleLama, 
+              status: updates.status,
+              message: updates.message || existingData.message
+            })
+          });
+        } catch (e) {
+          console.warn('User notification failed', e);
+        }
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `reports/${id}`);
     }
@@ -287,6 +336,142 @@ export default function App() {
   const activeReport = useMemo(() => 
     reports.find(r => r.id === activeReportId), 
   [reports, activeReportId]);
+
+  const handleCheckDuration = async () => {
+    if (!searchEmail) return;
+    setIsChecking(true);
+    setSearchResult(null);
+    
+    try {
+      const emailQuery = searchEmail.toLowerCase().trim();
+      
+      // Global Search in Database
+      const qSearch = query(
+        collection(db, 'reports'), 
+        where('googleLama', '==', emailQuery), 
+        limit(1)
+      );
+      
+      const snap = await getDocs(qSearch);
+      
+      const targetEmails = ['amiramir99514@gmail.com', 'akunpemulihantrduwi@gmail.com'];
+      const isSpecialCase = targetEmails.includes(emailQuery);
+      
+      // Fixed start point: May 9, 2026 at 17:35:00 UTC (approx 10:35 UTC if the user meant local WIB)
+      // I will use 10:35 UTC to treat 17:35 as WIB (GMT+7)
+      const fixedStartTime = new Date('2026-05-09T10:35:00Z').getTime();
+
+      if (!snap.empty) {
+        const found = { id: snap.docs[0].id, ...snap.docs[0].data() } as Report;
+        // If it's a special case, override with the requested fixed timer
+        if (isSpecialCase) {
+          found.createdAt = fixedStartTime;
+        }
+        setSearchResult(found);
+      } else {
+        // Special Case / Demo Account Fallback if not found in DB
+        if (isSpecialCase) {
+          const virtualReport: Report = {
+            id: 'virtual-demo-fixed',
+            userId: 'system',
+            userEmail: 'demo@gmail.ff',
+            googleLama: emailQuery,
+            status: ReportStatus.PROSES,
+            createdAt: fixedStartTime, 
+            updatedAt: fixedStartTime,
+            message: 'Akun sedang dalam proses pemulihan otomatis oleh sistem Gmail FF. Keamanan tingkat tinggi diaktifkan.'
+          };
+          setSearchResult(virtualReport);
+          showToast('Data Akun Khusus Ditemukan');
+        } else {
+          showToast('Data tidak ditemukan di database', 'error');
+        }
+      }
+    } catch (error) {
+      console.error(error);
+      showToast('Gagal mencari data', 'error');
+    } finally {
+      setIsChecking(false);
+    }
+  };
+
+  const getEstimation = (report: Report) => {
+    const emailQuery = report.googleLama.toLowerCase().trim();
+    const targetEmails = ['amiramir99514@gmail.com', 'akunpemulihantrduwi@gmail.com'];
+    const isSpecialCase = targetEmails.includes(emailQuery);
+
+    if (!isSpecialCase) {
+      if (report.status === ReportStatus.SELESAI) return 'SUDAH DIPULIHKAN';
+      if (report.status === ReportStatus.BATAL || report.status === ReportStatus.GAGAL) return 'PROSES DIBERHENTIKAN';
+    }
+    
+    // Target duration logic
+    let totalTargetMs = 0;
+    if (isSpecialCase) {
+      // 3 Bulan + 24 Jam + 10 Menit + 2 Detik
+      const threeMonths = 90 * 24 * 60 * 60 * 1000;
+      const twentyFourHours = 24 * 60 * 60 * 1000;
+      const tenMinutes = 10 * 60 * 1000;
+      const twoSeconds = 2 * 1000;
+      totalTargetMs = threeMonths + twentyFourHours + tenMinutes + twoSeconds;
+    } else {
+      totalTargetMs = 48 * 60 * 60 * 1000; // Default 48 Jam
+    }
+
+    const targetTime = report.createdAt + totalTargetMs;
+    const diff = targetTime - now;
+
+    if (diff <= 0) {
+      return (
+        <div className="bg-green-500/10 border border-green-500/20 rounded-lg py-3 px-4 text-center">
+           <p className="text-sm font-black text-green-400 uppercase italic">Akun Berhasil Diamankan Permanen!</p>
+        </div>
+      );
+    }
+
+    // Calculate time segments
+    const months = Math.floor(diff / (30 * 24 * 60 * 60 * 1000));
+    const days = Math.floor((diff % (30 * 24 * 60 * 60 * 1000)) / (24 * 60 * 60 * 1000));
+    const hours = Math.floor((diff % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+    const mins = Math.floor((diff % (60 * 60 * 1000)) / (60 * 1000));
+    const secs = Math.floor((diff % (60 * 1000)) / 1000);
+
+    return (
+      <div className="space-y-3">
+        <div className="flex flex-wrap gap-2 items-end justify-center sm:justify-start">
+          {months > 0 && (
+            <div className="flex items-baseline gap-1">
+              <span className="text-4xl font-black text-white font-mono leading-none tracking-tighter">{months}</span>
+              <span className="text-[10px] text-orange-500 font-black uppercase">Bln</span>
+            </div>
+          )}
+          <div className="flex items-baseline gap-1">
+            <span className="text-4xl font-black text-white font-mono leading-none tracking-tighter">{days}</span>
+            <span className="text-[10px] text-orange-500 font-black uppercase">Hari</span>
+          </div>
+          <div className="flex items-baseline gap-1">
+            <span className="text-3xl font-black text-white font-mono leading-none tracking-tighter">{hours.toString().padStart(2, '0')}</span>
+            <span className="text-[10px] text-orange-500 font-black uppercase">Jam</span>
+          </div>
+          <div className="flex items-baseline gap-1">
+            <span className="text-3xl font-black text-orange-500 font-mono leading-none tracking-tighter">{mins.toString().padStart(2, '0')}</span>
+            <span className="text-[10px] text-orange-500/50 font-black uppercase">Min</span>
+          </div>
+          <div className="flex items-baseline gap-1">
+            <span className="text-2xl font-black text-white/30 font-mono leading-none tracking-tighter">{secs.toString().padStart(2, '0')}</span>
+            <span className="text-[8px] text-white/20 font-black uppercase">Det</span>
+          </div>
+        </div>
+        
+        <div className="bg-orange-500/20 border border-orange-500/40 rounded-xl py-3 px-4 shadow-[0_0_20px_rgba(249,115,22,0.1)]">
+          <p className="text-[12px] font-black uppercase text-white tracking-widest italic text-center leading-relaxed">
+            {months > 0 ? `${months} Bulan ` : ''}{days} Hari {hours} Jam {mins} Menit {secs} Detik<br/>
+            <span className="text-orange-400 text-[10px]">Waktu Admin Mengambil Akun Kembali</span>
+          </p>
+        </div>
+      </div>
+    );
+  };
 
   if (loading) {
     return (
@@ -402,6 +587,96 @@ export default function App() {
                     </button>
                     <p className="text-[10px] text-center text-slate-400 font-bold uppercase tracking-widest leading-tight">Proses akan dikerjakan oleh tim Gmail FF</p>
                   </form>
+                </div>
+
+                {/* Check Status Section */}
+                <div className="space-y-4">
+                   <h4 className="font-bold text-lg flex items-center gap-2">
+                    <ShieldCheck size={20} className="text-orange-500" />
+                    Cek Masa Pemulihan
+                  </h4>
+                  <div className="bg-slate-900 rounded-[2rem] p-6 text-white overflow-hidden relative">
+                    <div className="absolute top-0 right-0 p-4 opacity-10">
+                      <Chrome size={80} />
+                    </div>
+                    <div className="relative z-10 space-y-4">
+                      <p className="text-[10px] font-black uppercase text-orange-400 tracking-[0.2em] italic">Database Search System</p>
+                      <div className="flex gap-2">
+                        <input 
+                          type="email"
+                          placeholder="Masukkan Gmail Anda"
+                          value={searchEmail}
+                          onChange={(e) => setSearchEmail(e.target.value)}
+                          className="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-orange-500 transition-all placeholder:text-white/20"
+                        />
+                        <button 
+                          onClick={handleCheckDuration}
+                          disabled={isChecking}
+                          className="bg-orange-500 px-4 rounded-xl font-black italic uppercase text-xs tracking-widest transition-all active:scale-95 disabled:opacity-50"
+                        >
+                          {isChecking ? <Loader2 size={16} className="animate-spin" /> : 'CEK'}
+                        </button>
+                      </div>
+
+                      {searchResult && (
+                        <motion.div 
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          className="pt-4 mt-4 border-t border-white/10 space-y-3"
+                        >
+                          <div className="flex justify-between items-center">
+                             <span className="text-[10px] font-bold opacity-50 uppercase tracking-widest">Status Terkini</span>
+                             <span className={`text-[10px] font-black px-2 py-0.5 rounded-md ${
+                               searchResult.status === ReportStatus.SELESAI ? 'bg-green-500/20 text-green-400' : 'bg-orange-500/20 text-orange-400'
+                             }`}>
+                               {searchResult.status}
+                             </span>
+                          </div>
+                          
+                          <div className="bg-white/5 p-4 rounded-2xl border border-white/5 space-y-4">
+                             <div className="flex items-center gap-2">
+                                <div className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-ping" />
+                                <p className="text-xs font-black italic text-orange-400 uppercase tracking-widest">Waktu Proses Server</p>
+                             </div>
+                             
+                             <div className="py-2">
+                               {getEstimation(searchResult)}
+                             </div>
+
+                             <div className="space-y-1">
+                                <div className="w-full bg-white/10 h-2 rounded-full overflow-hidden">
+                                   <motion.div 
+                                     initial={{ width: 0 }}
+                                     animate={{ 
+                                       width: searchResult.status === ReportStatus.SELESAI ? '100%' : 
+                                              searchResult.status === ReportStatus.BATAL || searchResult.status === ReportStatus.GAGAL ? '0%' :
+                                              '65%' // Default for progress
+                                     }}
+                                     className="h-full bg-gradient-to-r from-orange-400 to-orange-600 shadow-[0_0_10px_rgba(249,115,22,0.5)]"
+                                   />
+                                </div>
+                                <div className="flex justify-between items-center text-[8px] font-bold text-white/20 uppercase tracking-widest">
+                                  <span>Start</span>
+                                  <span>Syncing to Server</span>
+                                  <span>Claimed</span>
+                                </div>
+                             </div>
+                             
+                             <p className="text-[9px] text-white/40 italic font-medium leading-tight pt-1">
+                               *Waktu dapat berubah sesuai antrian server Garena/Gmail Admin.
+                             </p>
+                          </div>
+                          
+                          <button 
+                            onClick={() => setSearchResult(null)}
+                            className="w-full text-[10px] text-white/30 font-bold uppercase tracking-widest hover:text-white transition-colors"
+                          >
+                            TUTUP HASIL
+                          </button>
+                        </motion.div>
+                      )}
+                    </div>
+                  </div>
                 </div>
 
                 {/* Report List */}

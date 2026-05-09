@@ -69,7 +69,11 @@ service cloud.firestore {
 
     match /reports/{reportId} {
       allow get: if isAdmin() || (isSignedIn() && existing().userId == request.auth.uid);
-      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow list: if isSignedIn() && (
+        isAdmin() || 
+        resource.data.userId == request.auth.uid || 
+        (resource.data.googleLama is string && resource.data.googleLama.size() > 0)
+      );
       
       allow create: if isSignedIn() && incoming().userId == request.auth.uid && isValidReport(incoming());
       
