@@ -25,7 +25,10 @@ import {
   Settings,
   Search,
   Eraser,
-  FileText
+  FileText,
+  MapPin,
+  Globe,
+  Smartphone
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User, UserRole, Report, ReportStatus, AppState, Message, AppSettings, AccountBind, BindStatus } from './types';
@@ -283,13 +286,14 @@ const GlobalChat = ({ currentUser, showToast, chatSettings, onResetChat }: {
   );
 };
 
-const CekBind = ({ bindings, bindSearch, setBindSearch, isAdmin, onDelete, onUpdateNote }: { 
+const CekBind = ({ bindings, bindSearch, setBindSearch, isAdmin, onDelete, onUpdateNote, onShowDetails }: { 
   bindings: AccountBind[], 
   bindSearch: string, 
   setBindSearch: (v: string) => void,
   isAdmin?: boolean,
   onDelete?: (id: string) => void,
-  onUpdateNote?: (id: string, note: string) => void
+  onUpdateNote?: (id: string, note: string) => void,
+  onShowDetails?: (bind: AccountBind) => void
 }) => {
   const filtered = bindings.filter(b => 
     b.accountName.toLowerCase().includes(bindSearch.toLowerCase()) || 
@@ -313,7 +317,7 @@ const CekBind = ({ bindings, bindSearch, setBindSearch, isAdmin, onDelete, onUpd
            </div>
 
            <div className="relative">
-             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600" size={18} />
              <input 
                value={bindSearch}
                onChange={(e) => setBindSearch(e.target.value)}
@@ -392,6 +396,14 @@ const CekBind = ({ bindings, bindSearch, setBindSearch, isAdmin, onDelete, onUpd
                     </div>
 
                     <div className="space-y-2">
+                      <button 
+                         onClick={() => onShowDetails?.(bind)}
+                         className="w-full py-2 bg-slate-100 text-slate-600 rounded-xl text-[10px] font-bold uppercase tracking-wider hover:bg-slate-200 transition-all flex items-center justify-center gap-2"
+                      >
+                        <MapPin size={10} />
+                        Cek Lokasi Selengkapnya
+                      </button>
+
                       {bind.notes && (
                         <div className="bg-orange-50/50 p-3 rounded-xl border border-orange-100">
                            <p className="text-[10px] text-orange-800 leading-relaxed italic">"{bind.notes}"</p>
@@ -443,6 +455,7 @@ export default function App() {
   });
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [activeReportId, setActiveReportId] = useState<string | null>(null);
+  const [selectedBindDetails, setSelectedBindDetails] = useState<AccountBind | null>(null);
 
   // Form states
   const [googleLama, setGoogleLama] = useState('');
@@ -1288,6 +1301,7 @@ export default function App() {
                   isAdmin={currentUser?.role === UserRole.ADMIN}
                   onDelete={deleteBind}
                   onUpdateNote={updateBindNote}
+                  onShowDetails={(b) => setSelectedBindDetails(b)}
                 />
               </motion.div>
             )}
@@ -1749,6 +1763,86 @@ export default function App() {
             )}
           </div>
         )}
+
+        {/* Detail Location Modal */}
+        <AnimatePresence>
+          {selectedBindDetails && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-sm"
+              onClick={() => setSelectedBindDetails(null)}
+            >
+              <motion.div 
+                initial={{ scale: 0.9, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.9, y: 20 }}
+                className="bg-white w-full max-w-md rounded-[2.5rem] overflow-hidden shadow-2xl"
+                onClick={e => e.stopPropagation()}
+              >
+                <div className="bg-slate-900 p-8 text-white relative">
+                  <div className="absolute top-0 right-0 p-6">
+                    <button 
+                      onClick={() => setSelectedBindDetails(null)}
+                      className="p-2 hover:bg-white/10 rounded-full transition-all"
+                    >
+                      <LogOut size={20} className="rotate-90" />
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-4 mb-6">
+                    <div className="w-14 h-14 bg-orange-500 rounded-2xl flex items-center justify-center shadow-lg shadow-orange-500/20">
+                      <MapPin size={28} />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black uppercase tracking-tight">Detail Lokasi</h3>
+                      <p className="text-xs text-slate-400">Informasi aktivitas login terakhir</p>
+                    </div>
+                  </div>
+                  <div className="space-y-4">
+                    <div className="bg-white/5 p-4 rounded-2xl border border-white/10">
+                      <div className="flex items-center gap-2 mb-2 opacity-60">
+                         <ShieldCheck size={14} />
+                         <span className="text-[10px] font-bold uppercase tracking-widest">Akun Target</span>
+                      </div>
+                      <p className="font-bold text-lg">{selectedBindDetails.accountName}</p>
+                      <p className="text-sm text-slate-400">{selectedBindDetails.emailBind}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-8 space-y-6">
+                   <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Lokasi Presisi</label>
+                      <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex items-start gap-3">
+                         <Globe size={18} className="text-orange-500 mt-0.5 shrink-0" />
+                         <p className="text-sm font-bold text-slate-700 break-words leading-relaxed">
+                           {selectedBindDetails.location || "Lokasi IP tidak terdeteksi secara otomatis"}
+                         </p>
+                      </div>
+                   </div>
+
+                   <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Device Terungkap</label>
+                      <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex items-start gap-3">
+                         <Smartphone size={18} className="text-slate-400 mt-0.5 shrink-0" />
+                         <p className="text-sm font-bold text-slate-700">
+                           {selectedBindDetails.device || "Informasi device tidak tersedia"}
+                         </p>
+                      </div>
+                   </div>
+
+                   <button 
+                     onClick={() => setSelectedBindDetails(null)}
+                     className="w-full py-4 bg-orange-500 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-orange-600 shadow-lg shadow-orange-100 transition-all"
+                   >
+                     Tutup Detail
+                   </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <AnimatePresence>
           {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
